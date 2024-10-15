@@ -38,10 +38,8 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                                     WHERE frasi.id_frase = NEW.frase_modifica);
             IF NEW.autore_modifica = autore_articolo_modifica
             THEN
-                IF NOT get_existence_modifiche_in_attesa_in_articolo (NOW() ,articolo_riferimento) THEN
-                    NEW.data_accettazione_frase := NOW();
-                    NEW.data_aggiornamento := NOW();
-                    NEW.accettazione := true;
+                IF NOT get_existence_modifiche_in_attesa_in_articolo (NOW()::timestamp, articolo_originale) THEN
+                    
                     IF NEW.posizione = -1
                     THEN
                         posizione_partenza_spostamento :=
@@ -51,6 +49,10 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                     ELSE
                         posizione_partenza_spostamento := NEW.posizione;
                     END IF;
+                    
+                    NEW.data_accettazione_frase := NOW();
+                    NEW.data_aggiornamento := NOW();
+                    NEW.accettazione := true;
 
                     CALL spostamento_modifiche (CASE WHEN NEW.posizione = -1 THEN -1 ELSE 1 END,
                         articolo_originale,
@@ -80,9 +82,7 @@ INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
 
 
 
-
-
-CREATE OR REPLACE FUNCTION aggiornamento_modifiche() RETURNS trigger
+CREATE OR REPLACE FUNCTION aggiornamento_modifica() RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
     DECLARE
@@ -91,15 +91,7 @@ AS $function$
         articolo_riferimento frasi.articolo_contenitore%TYPE;
         riga_ordinamento ordinamento_modifiche%ROWTYPE;
         old_data_accettazione modifiche.data_accettazione_frase%TYPE;
-        data_aggiornamento_mod_originale modifiche.data_aggiornamento%TYPE :=
-            CASE WHEN scaling_modifiche(old_posizione,
-            NEW.data_creazione,
-            articolo_riferimento) != 0
-			THEN
-            (NOW() - INTERVAL '1 microsecond')
-            ELSE
-            NOW()
-            END;
+        data_aggiornamento_mod_originale modifiche.data_aggiornamento%TYPE;
     BEGIN
         IF is_modifica_revisionata(OLD, NEW)
         THEN
@@ -108,7 +100,7 @@ AS $function$
 
         articolo_riferimento := get_articolo_from_frase(OLD.frase_modifica);
 
-        IF get_existence_modifiche_in_attesa_in_articolo (OLD.data_creazione ,articolo_riferimento) THEN
+        IF get_existence_modifiche_in_attesa_in_articolo (OLD.data_creazione, articolo_riferimento) THEN
             RAISE EXCEPTION 'Altre modifiche da revisionare per questo testo';
         END IF;
 
@@ -132,17 +124,64 @@ AS $function$
 
             IF (NEW.posizione = -1) THEN
                 steps := -1;
-                old_posizione := 1 + (
+                old_posizione := (
                     SELECT posizione
                     FROM modifiche
                     WHERE frase_modifica = OLD.frase_modifica AND posizione > -1
                     ORDER BY data_aggiornamento DESC
                     LIMIT 1
                 );
+                DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
+
+                IF riga_ordinamento.frase_raccordo_sinistra IS NOT NULL THEN
+                    CALL insert_raccordo (FALSE, NEW.posizione, riga_ordinamento);
+                END IF;
+                
+                IF scaling_modifiche(old_posizione,
+                NEW.data_creazione,
+                articolo_riferimento) != 0
+                THEN
+                    INSERT INTO modifiche (
+                        data_creazione,
+                        posizione,
+                        accettazione,
+                        data_accettazione_frase,
+                        data_aggiornamento,
+                        autore_modifica,
+                        frase_modifica,
+                        collegamento
+                    ) VALUES (
+                        NOW(),
+                        NEW.posizione + riga_ordinamento.offset_posizione,
+                        NEW.accettazione,
+                        NEW.data_accettazione_frase,
+                        NOW(),
+                        NEW.autore_modifica,
+                        NEW.frase_modifica,
+                        NEW.collegamento
+                    );
+                END IF;
+
+                IF riga_ordinamento.frase_raccordo_destra IS NOT NULL THEN
+                    CALL insert_raccordo (TRUE, NEW.posizione, riga_ordinamento);
+                END IF;
+
+                CREATE TRIGGER creazione_modifica BEFORE
+                INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
             ELSE
-                old_posizione := OLD.posizione;
+                old_posizione := NEW.posizione;
             END IF;
             RAISE NOTICE 'old_posizione = %', old_posizione;
+
+            data_aggiornamento_mod_originale :=
+            CASE WHEN scaling_modifiche(old_posizione,
+            NEW.data_creazione,
+            articolo_riferimento) != 0
+			THEN
+            (NOW() - INTERVAL '1 microsecond')
+            ELSE
+            NOW()
+            END;
 
             CALL spostamento_modifiche(steps + riga_ordinamento.offset_posizione,
                 articolo_riferimento,
@@ -154,47 +193,6 @@ AS $function$
                              WHERE frase_modifica = NEW.frase_modifica AND
                              accettazione = TRUE AND
                              data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
-            DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
-
-            IF riga_ordinamento.frase_raccordo_sinistra IS NOT NULL THEN
-                CALL insert_raccordo (FALSE, NEW.posizione, riga_ordinamento);
-            END IF;
-
-            IF scaling_modifiche(old_posizione,
-            NEW.data_creazione,
-            articolo_riferimento) != 0 AND NEW.posizione > -1
-            THEN
-                INSERT INTO modifiche (
-                    data_creazione,
-                    posizione,
-                    accettazione,
-                    data_accettazione_frase,
-                    data_aggiornamento,
-                    autore_modifica,
-                    frase_modifica,
-                    collegamento
-                ) VALUES (
-                    NOW(),
-                    NEW.posizione + riga_ordinamento.offset_posizione,
-                    NEW.accettazione,
-                    NEW.data_accettazione_frase,
-                    NOW(),
-                    NEW.autore_modifica,
-                    NEW.frase_modifica,
-                    NEW.collegamento
-                );
-            END IF;
-
-            IF riga_ordinamento.frase_raccordo_destra IS NOT NULL THEN
-                CALL insert_raccordo (TRUE, NEW.posizione, riga_ordinamento);
-            END IF;
-
-
-
-
-        CREATE TRIGGER creazione_modifica BEFORE
-        INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
-
 
         DELETE FROM ordinamento_modifiche WHERE modifica_da_ordinare = NEW.id_modifica;
         END IF;
@@ -211,7 +209,7 @@ AS $function$
 $function$;
 
 CREATE TRIGGER revisione_modifiche BEFORE
-UPDATE ON modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_modifiche();
+UPDATE ON modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_modifica();
 
 
 
@@ -285,7 +283,7 @@ AS $procedure$
             INNER JOIN modifiche m ON f.id_frase = m.frase_modifica
             WHERE f.articolo_contenitore = articolo
             AND m.accettazione = TRUE
-            AND m.frase_modifica != frase_pivot
+            AND f.id_frase != frase_pivot
             AND m.posizione >= posizione_partenza
 			AND m.data_aggiornamento = (
 			  	SELECT MAX(m2.data_aggiornamento)
@@ -357,7 +355,7 @@ CREATE OR REPLACE FUNCTION is_frase_in_articolo (articolo articoli.titolo%TYPE, 
     LANGUAGE plpgsql
     as $function$
         BEGIN
-        IF get_articolo_from_frase(frase) = articolo
+        IF get_articolo_from_frase(frase) != articolo
         THEN
             RAISE EXCEPTION 'Frase non appartenente all''articolo selezionato';
         END IF;
@@ -455,7 +453,7 @@ AS $function$
                                                            frase_modifica = id_frase_modifica AND
                                                            accettazione = true));
     BEGIN
-		RETURN ultima_posizione_positiva - posizione_originale;
+        RETURN ultima_posizione_positiva - posizione_originale;
     END;
 $function$;
 
@@ -470,7 +468,7 @@ AS $procedure$
             RAISE EXCEPTION 'Frase già cancellata';
         END IF;
 
-        IF is_frase_in_articolo(modifica_da_controllare.frase_modifica)
+        IF modifica_da_controllare.posizione > -1 AND is_frase_in_articolo(modifica_da_controllare.frase_modifica)
         THEN
             RAISE EXCEPTION 'frase già presente';
         END IF;
