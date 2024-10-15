@@ -38,16 +38,7 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                                     WHERE frasi.id_frase = NEW.frase_modifica);
             IF NEW.autore_modifica = autore_articolo_modifica
             THEN
-                IF NOT EXISTS (SELECT *
-                                FROM modifiche
-                                INNER JOIN frasi
-                                ON frasi.id_frase = modifiche.frase_modifica
-                                WHERE modifiche.posizione > -1 AND
-                                accettazione = false AND
-                                data_aggiornamento IS NULL AND
-                                frasi.articolo_contenitore = articolo_originale
-                                )
-                THEN
+                IF NOT get_existence_modifiche_in_attesa_in_articolo (NOW() ,articolo_riferimento) THEN
                     NEW.data_accettazione_frase := NOW();
                     NEW.data_aggiornamento := NOW();
                     NEW.accettazione := true;
@@ -56,9 +47,7 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                         posizione_partenza_spostamento :=
                             (SELECT posizione FROM modifiche
                             WHERE frase_modifica = NEW.frase_modifica AND
-                            data_aggiornamento = (SELECT MAX (data_aggiornamento)
-                                FROM modifiche
-                                WHERE frase_modifica = NEW.frase_modifica));
+                            data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
                     ELSE
                         posizione_partenza_spostamento := NEW.posizione;
                     END IF;
@@ -119,15 +108,7 @@ AS $function$
 
         articolo_riferimento := get_articolo_from_frase(OLD.frase_modifica);
 
-        IF EXISTS (
-            SELECT *
-            FROM modifiche
-            INNER JOIN frasi ON frasi.id_frase = modifiche.frase_modifica
-            WHERE data_creazione < OLD.data_creazione AND
-                    accettazione = FALSE AND
-                    data_aggiornamento IS NULL AND
-                    frasi.articolo_contenitore = articolo_riferimento
-        ) THEN
+        IF get_existence_modifiche_in_attesa_in_articolo (OLD.data_creazione ,articolo_riferimento) THEN
             RAISE EXCEPTION 'Altre modifiche da revisionare per questo testo';
         END IF;
 
@@ -172,11 +153,7 @@ AS $function$
                              FROM modifiche
                              WHERE frase_modifica = NEW.frase_modifica AND
                              accettazione = TRUE AND
-                             data_aggiornamento = (SELECT MAX(data_aggiornamento)
-                                                   FROM modifiche
-                                                   WHERE frase_modifica = NEW.frase_modifica AND
-                                                   accettazione = TRUE
-                                                   ));
+                             data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
             DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
 
             IF riga_ordinamento.frase_raccordo_sinistra IS NOT NULL THEN
@@ -526,5 +503,33 @@ AS $function$
                  new_modifica.frase_modifica = old_modifica.frase_modifica AND
                  new_modifica.collegamento = old_modifica.collegamento) AND
                 old_modifica.data_aggiornamento IS NULL);
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION get_existence_modifiche_in_attesa_in_articolo (data_creazione_minima modifiche.data_creazione%TYPE, articolo_riferimento articoli.titolo%TYPE)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+    RETURN EXISTS (SELECT * FROM modifiche
+                  INNER JOIN frasi 
+                  ON frasi.id_frase = modifiche.frase_modifica
+                  WHERE data_creazione < data_creazione_minima AND
+                  accettazione = false AND
+                  data_aggiornamento IS NULL AND
+                  frasi.articolo_contenitore = articolo_riferimento);
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION get_max_data_aggiornamento(frase INTEGER)
+RETURNS modifiche.data_aggiornamento%TYPE
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN (SELECT MAX(data_aggiornamento)
+                FROM modifiche
+                WHERE frase_modifica = frase AND
+                accettazione = true
+                );
     END;
 $function$;
