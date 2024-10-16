@@ -21,17 +21,27 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
     LANGUAGE plpgsql
     AS $function$
         DECLARE autore_articolo_modifica articoli.autore_articolo%TYPE;
-        articolo_originale articoli.titolo%TYPE;
+        articolo_originale articoli.titolo%TYPE := (get_articolo_from_frase(NEW.frase_modifica));
         posizione_partenza_spostamento INTEGER;
+        posizione_massima INTEGER := (SELECT COUNT(*) FROM modifiche AS m
+                                      INNER JOIN frasi AS f
+                                      ON m.frase_modifica = f.id_frase
+                                      WHERE f.articolo_contenitore = articolo_originale AND 
+                                      accettazione = true AND
+                                      data_aggiornamento = get_max_data_aggiornamento(m.frase_modifica));
         BEGIN
             IF NEW.posizione < -1
-            THEN RAISE EXCEPTION 'La posizione di una frase non può essere minore di -1';
+                THEN RAISE EXCEPTION 'La posizione di una frase non può essere minore di -1';
             END IF;
 
             CALL controlli_modifiche_base(NEW);
+            IF NEW.posizione > posizione_massima
+            THEN
+                RAISE EXCEPTION 'Posizione modifica > posizione massima possibile per questo articolo';
+            END IF;
 
-            NEW.accettazione := FALSE;
-            articolo_originale := (get_articolo_from_frase(NEW.frase_modifica));
+
+            NEW.accettazione := false;
             autore_articolo_modifica  := (SELECT autore_articolo FROM articoli
                                     INNER JOIN frasi
                                     ON articoli.titolo = frasi.articolo_contenitore
@@ -45,6 +55,7 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                         posizione_partenza_spostamento :=
                             (SELECT posizione FROM modifiche
                             WHERE frase_modifica = NEW.frase_modifica AND
+                            accettazione = true AND
                             data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
                     ELSE
                         posizione_partenza_spostamento := NEW.posizione;
@@ -191,7 +202,7 @@ AS $function$
             old_data_accettazione := (SELECT data_accettazione_frase
                              FROM modifiche
                              WHERE frase_modifica = NEW.frase_modifica AND
-                             accettazione = TRUE AND
+                             accettazione = true AND
                              data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
 
         DELETE FROM ordinamento_modifiche WHERE modifica_da_ordinare = NEW.id_modifica;
@@ -202,6 +213,8 @@ AS $function$
         IF old_data_accettazione IS NULL
         THEN
             NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
+        ELSE
+            NEW.data_accettazione_frase := old_data_accettazione;
         END IF;
 
         RETURN NEW;
@@ -329,7 +342,10 @@ CREATE OR REPLACE FUNCTION is_frase_cancellata (frase INTEGER)
     LANGUAGE plpgsql
     as $function$
         BEGIN
-        RETURN EXISTS (SELECT * FROM modifiche WHERE frase_modifica = frase AND posizione = -1 AND data_aggiornamento = (SELECT MAX (data_aggiornamento) FROM modifiche WHERE frase_modifica = frase));
+        RETURN EXISTS (SELECT * FROM modifiche
+        WHERE frase_modifica = frase AND
+        posizione = -1 AND
+        accettazione = true);
         END;
     $function$;
 
@@ -462,8 +478,7 @@ CREATE OR REPLACE PROCEDURE controlli_modifiche_base (modifica_da_controllare mo
 LANGUAGE plpgsql
 AS $procedure$
     BEGIN
-        IF modifica_da_controllare.posizione = -1 AND
-            is_frase_cancellata(modifica_da_controllare.frase_modifica)
+        IF is_frase_cancellata(modifica_da_controllare.frase_modifica)
         THEN 
             RAISE EXCEPTION 'Frase già cancellata';
         END IF;
@@ -471,6 +486,11 @@ AS $procedure$
         IF modifica_da_controllare.posizione > -1 AND is_frase_in_articolo(modifica_da_controllare.frase_modifica)
         THEN
             RAISE EXCEPTION 'frase già presente';
+        END IF;
+
+        IF modifica_da_controllare.posizione = -1 AND NOT is_frase_in_articolo(modifica_da_controllare.frase_modifica)
+        THEN
+            RAISE EXCEPTION 'frase non cancellabile (non è presente nell''articolo)';
         END IF;
 
         IF modifica_analoga_exists (modifica_da_controllare.*)
