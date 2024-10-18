@@ -27,7 +27,8 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                                       INNER JOIN frasi AS f
                                       ON m.frase_modifica = f.id_frase
                                       WHERE f.articolo_contenitore = articolo_originale AND 
-                                      accettazione = true AND
+                                      m.accettazione = true AND
+                                      m.frase_modifica != NEW.frase_modifica AND
                                       data_aggiornamento = get_max_data_aggiornamento(m.frase_modifica));
         BEGIN
             IF NEW.posizione < -1
@@ -102,7 +103,9 @@ AS $function$
         articolo_riferimento frasi.articolo_contenitore%TYPE;
         riga_ordinamento ordinamento_modifiche%ROWTYPE;
         old_data_accettazione modifiche.data_accettazione_frase%TYPE;
-        data_aggiornamento_mod_originale modifiche.data_aggiornamento%TYPE;
+        data_aggiornamento_mod_originale modifiche.data_aggiornamento%TYPE:= NOW();
+        scaling_mod INTEGER;
+        formuletta INTEGER;
     BEGIN
         IF is_modifica_revisionata(OLD, NEW)
         THEN
@@ -133,18 +136,50 @@ AS $function$
             
             CALL controlli_modifiche_base(NEW);
 
+            
+
+            old_data_accettazione := (SELECT data_accettazione_frase
+                                      FROM modifiche
+                                      WHERE frase_modifica = NEW.frase_modifica AND
+                                      accettazione = true AND
+                                      data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
+            
+
+            old_posizione := CASE WHEN NEW.posizione = -1 THEN 
+                            get_ultima_posizione_positiva(NEW.frase_modifica, NOW()::timestamp - INTERVAL '1 microsecond')
+                            ELSE NEW.posizione
+                            END;
+
+            scaling_mod := scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento);
+
+            data_aggiornamento_mod_originale :=
+                CASE WHEN scaling_mod != 0
+                THEN
+                (NOW() - INTERVAL '1 millisecond')
+                ELSE
+                NOW()
+                END;    
+            IF old_data_accettazione IS NULL
+                THEN
+                    NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
+                ELSE
+                    NEW.data_accettazione_frase := old_data_accettazione;
+                END IF;
+            NEW.data_aggiornamento := data_aggiornamento_mod_originale;
+
+            formuletta := (scaling_mod -
+                          (get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_ordinamento.offset_posizione));
+
+            RAISE NOTICE 'old_posizione = %', old_posizione;
+
+        
+            RAISE NOTICE 'formuletta: % - (% - %) = %', scaling_mod,
+                get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_ordinamento.offset_posizione,
+                formuletta;
+
             IF (NEW.posizione = -1) THEN
                 steps := -1;
-                old_posizione := (
-                    SELECT posizione
-                    FROM modifiche
-                    WHERE frase_modifica = OLD.frase_modifica AND posizione > -1
-                    ORDER BY data_aggiornamento DESC
-                    LIMIT 1
-                );
-                
             ELSE
-                old_posizione := NEW.posizione;
                 IF riga_ordinamento.frase_raccordo_sinistra IS NOT NULL THEN
                     CALL insert_raccordo (FALSE, NEW.posizione, riga_ordinamento);
                 END IF;
@@ -152,77 +187,45 @@ AS $function$
                 IF riga_ordinamento.frase_raccordo_destra IS NOT NULL THEN
                     CALL insert_raccordo (TRUE, NEW.posizione, riga_ordinamento);
                 END IF;
+
+                DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
+
+                IF scaling_mod != 0
+                THEN
+                    INSERT INTO modifiche (
+                        data_creazione,
+                        posizione,
+                        accettazione,
+                        data_accettazione_frase,
+                        data_aggiornamento,
+                        autore_modifica,
+                        frase_modifica,
+                        collegamento
+                    ) VALUES (
+                        NEW.data_creazione,
+                        NEW.posizione + formuletta,
+                        NEW.accettazione,
+                        NEW.data_accettazione_frase,
+                        NOW(),
+                        NEW.autore_modifica,
+                        NEW.frase_modifica,
+                        NEW.collegamento
+                    );
+                END IF;
+
+                CREATE TRIGGER creazione_modifica BEFORE
+                INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
             END IF;
             
-        RAISE NOTICE 'old_posizione = %', old_posizione;
-
-        data_aggiornamento_mod_originale :=
-        CASE WHEN scaling_modifiche(old_posizione,
-        NEW.data_creazione,
-        articolo_riferimento) != 0
-		THEN
-        (NOW() - INTERVAL '1 microsecond')
-        ELSE
-        NOW()
-        END;    
-
-        old_data_accettazione := (SELECT data_accettazione_frase
-                     FROM modifiche
-                     WHERE frase_modifica = NEW.frase_modifica AND
-                     accettazione = true AND
-                     data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
-
+        
         DELETE FROM ordinamento_modifiche WHERE modifica_da_ordinare = NEW.id_modifica;
         END IF;
-        NEW.data_aggiornamento := data_aggiornamento_mod_originale;
 
-        
-
-        IF old_data_accettazione IS NULL
-        THEN
-            NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
-        ELSE
-            NEW.data_accettazione_frase := old_data_accettazione;
-        END IF;
-
-        DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
-
-        
-
-        IF scaling_modifiche(old_posizione, -- CONTROLLARE SE DEVE STARE NELL'ELSE DI NEW POSIZIONE -1
-        NEW.data_creazione,
-        articolo_riferimento) != 0
-        THEN
-            INSERT INTO modifiche (
-                data_creazione,
-                posizione,
-                accettazione,
-                data_accettazione_frase,
-                data_aggiornamento,
-                autore_modifica,
-                frase_modifica,
-                collegamento
-            ) VALUES (
-                NOW(),
-                NEW.posizione + (scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento) -
-                                    (get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione) - riga_ordinamento.offset_posizione)),
-                NEW.accettazione,
-                NEW.data_accettazione_frase,
-                NOW(),
-                NEW.autore_modifica,
-                NEW.frase_modifica,
-                NEW.collegamento
-            );
-        END IF;
-
-        CREATE TRIGGER creazione_modifica BEFORE
-        INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
 
         CALL spostamento_modifiche(steps + riga_ordinamento.offset_posizione,
             articolo_riferimento,
             NEW.frase_modifica,
-            old_posizione + (scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento) -
-                                    (get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione) - riga_ordinamento.offset_posizione)));
+            old_posizione + formuletta);
 
         RETURN NEW;
     END;
@@ -461,22 +464,16 @@ AS $function$
                                    data_aggiornamento = (SELECT MAX (data_aggiornamento)
                                                          FROM modifiche WHERE data_aggiornamento <
                                                          data_inserimento_modifica AND
-                                                         posizione = posizione_originale  AND
                                                          accettazione = true AND
                                                          articolo_contenitore = articolo));
 
 
-        ultima_posizione_positiva INTEGER := (SELECT posizione
-                                     FROM modifiche
-                                     WHERE modifiche.frase_modifica = id_frase_modifica AND
-                                     posizione > -1 AND
-                                     accettazione = true AND
-                                     data_aggiornamento = (SELECT MAX (data_aggiornamento)
-                                                           FROM modifiche WHERE posizione > -1 AND
-                                                           frase_modifica = id_frase_modifica AND
-                                                           accettazione = true));
+        ultima_posizione_positiva INTEGER := get_ultima_posizione_positiva(id_frase_modifica, (SELECT MAX (data_aggiornamento)
+                                                                           FROM modifiche WHERE posizione > -1 AND
+                                                                           frase_modifica = id_frase_modifica AND
+                                                                           accettazione = true));
     BEGIN
-        RETURN ultima_posizione_positiva - posizione_originale;
+        RETURN CASE WHEN id_frase_modifica IS NULL THEN 0 ELSE ultima_posizione_positiva - posizione_originale END;
     END;
 $function$;
 
@@ -560,15 +557,38 @@ AS $function$
 $function$;
 
 
-CREATE OR REPLACE FUNCTION get_modifiche_in_stessa_posizione(posizione INTEGER, data_aggiornamento_minima modifiche.data_creazione%TYPE) --restituisce il numero di modifiche che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
+izione_modifica INTEGER, data_aggiornamento_minima modifiche.data_creazione%TYPE, articolo articoli.titolo%TYPE) --restituisce il numero di modifiche che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$
     BEGIN
     RETURN (SELECT COUNT(*) FROM modifiche
+            INNER JOIN frasi
+			ON frase_modifica = id_frase
             WHERE data_aggiornamento > data_aggiornamento_minima AND
             accettazione = true AND
-            data_creazione != data_aggiornamento
+            data_creazione != data_aggiornamento AND
+            posizione = posizione_modifica AND
+            articolo_contenitore = articolo
             );
+    END;
+$function$;
+
+
+CREATE OR REPLACE FUNCTION get_ultima_posizione_positiva (frase INTEGER, max_data_aggiornamento modifiche.data_aggiornamento%TYPE)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN (
+                    SELECT posizione
+                    FROM modifiche
+                    WHERE frase_modifica = frase AND 
+                    posizione > -1 AND 
+                    accettazione = true AND
+                    data_aggiornamento <= max_data_aggiornamento
+                    ORDER BY data_aggiornamento DESC
+                    LIMIT 1
+                );
     END;
 $function$;
