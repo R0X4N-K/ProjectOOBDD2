@@ -122,7 +122,31 @@ AS $function$
         SELECT * INTO riga_ordinamento
         FROM ordinamento_modifiche
         WHERE modifica_da_ordinare = OLD.id_modifica;
+        
+        CALL controlli_modifiche_base(NEW);
+        old_data_accettazione := (SELECT data_accettazione_frase
+                                  FROM modifiche
+                                  WHERE frase_modifica = NEW.frase_modifica AND
+                                  accettazione = true AND
+                                  data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
+        
+        scaling_mod := scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento);
 
+        data_aggiornamento_mod_originale :=
+            CASE WHEN scaling_mod != 0
+            THEN
+            (NOW() - INTERVAL '1 millisecond')
+            ELSE
+            NOW()
+            END;    
+        IF old_data_accettazione IS NULL
+            THEN
+                NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
+            ELSE
+                NEW.data_accettazione_frase := old_data_accettazione;
+            END IF;
+        NEW.data_aggiornamento := data_aggiornamento_mod_originale;
+        
         IF NEW.accettazione = TRUE
         THEN
             IF riga_ordinamento IS NULL
@@ -134,38 +158,10 @@ AS $function$
                 RAISE EXCEPTION 'Frase non ordinata';
             END IF;
             
-            CALL controlli_modifiche_base(NEW);
-
-            
-
-            old_data_accettazione := (SELECT data_accettazione_frase
-                                      FROM modifiche
-                                      WHERE frase_modifica = NEW.frase_modifica AND
-                                      accettazione = true AND
-                                      data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
-            
-
             old_posizione := CASE WHEN NEW.posizione = -1 THEN 
                             get_ultima_posizione_positiva(NEW.frase_modifica, NOW()::timestamp - INTERVAL '1 microsecond')
                             ELSE NEW.posizione
                             END;
-
-            scaling_mod := scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento);
-
-            data_aggiornamento_mod_originale :=
-                CASE WHEN scaling_mod != 0
-                THEN
-                (NOW() - INTERVAL '1 millisecond')
-                ELSE
-                NOW()
-                END;    
-            IF old_data_accettazione IS NULL
-                THEN
-                    NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
-                ELSE
-                    NEW.data_accettazione_frase := old_data_accettazione;
-                END IF;
-            NEW.data_aggiornamento := data_aggiornamento_mod_originale;
 
             formuletta := (scaling_mod -
                           (get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_ordinamento.offset_posizione));
@@ -289,6 +285,16 @@ CREATE OR REPLACE FUNCTION aggiornamento_ordinamento_modifiche ()
             RAISE EXCEPTION 'non si può avere offset_posizione minore di 0 o maggiore delle modifiche accettate destinate a quella posizione';
         END IF;
 
+        RAISE NOTICE 'massimo_offset_posizione = %';
+        (SELECT COUNT(*)
+                                    FROM modifiche
+									INNER JOIN frasi
+									ON frase_modifica = id_frase
+                                    WHERE data_aggiornamento >= data_inserimento_modifica AND
+									accettazione = true AND
+									articolo_contenitore = articolo AND
+									posizione = posizione_originale
+                                    )
         RETURN NEW;
     END;
     $function$;
