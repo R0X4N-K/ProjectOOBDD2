@@ -176,13 +176,6 @@ AS $function$
             IF (NEW.posizione = -1) THEN
                 steps := -1;
             ELSE
-                IF riga_ordinamento.frase_raccordo_sinistra IS NOT NULL THEN
-                    CALL insert_raccordo (FALSE, NEW.posizione, riga_ordinamento);
-                END IF;
-
-                IF riga_ordinamento.frase_raccordo_destra IS NOT NULL THEN
-                    CALL insert_raccordo (TRUE, NEW.posizione, riga_ordinamento);
-                END IF;
 
                 DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
 
@@ -239,8 +232,6 @@ CREATE OR REPLACE FUNCTION inserimento_ordinamento_modifiche ()
     AS $function$
 	BEGIN
         NEW.offset_posizione := 0;
-        NEW.frase_raccordo_sinistra := NULL;
-        NEW.frase_raccordo_destra := NULL;
         NEW.visionato := false;
         RETURN NEW;
 	END;
@@ -284,17 +275,6 @@ CREATE OR REPLACE FUNCTION aggiornamento_ordinamento_modifiche ()
         THEN
             RAISE EXCEPTION 'non si può avere offset_posizione minore di 0 o maggiore delle modifiche accettate destinate a quella posizione';
         END IF;
-
-        RAISE NOTICE 'massimo_offset_posizione = %';
-        (SELECT COUNT(*)
-                                    FROM modifiche
-									INNER JOIN frasi
-									ON frase_modifica = id_frase
-                                    WHERE data_aggiornamento >= data_inserimento_modifica AND
-									accettazione = true AND
-									articolo_contenitore = articolo AND
-									posizione = posizione_originale
-                                    )
         RETURN NEW;
     END;
     $function$;
@@ -419,41 +399,6 @@ CREATE OR REPLACE FUNCTION is_frase_in_articolo (frase INTEGER)
         END;
     $function$;
 
-CREATE OR REPLACE PROCEDURE insert_raccordo (verso BOOLEAN,
-                                            posizione_frase_da_raccordare INTEGER,
-                                            riga_ordinamento ordinamento_modifiche)
-    LANGUAGE plpgsql
-    as $procedure$
-        DECLARE verso_int INTEGER := CASE WHEN verso = TRUE THEN 1 ELSE -1 END;
-        BEGIN
-            INSERT INTO frasi (testo, articolo_contenitore)
-                VALUES (riga_ordinamento.frase_raccordo_destra, articolo_riferimento)
-                -- RETURNING id_frase INTO riga_ordinamento.new_id_frase
-                ;
-
-                INSERT INTO modifiche (
-                    data_creazione,
-                    posizione,
-                    accettazione,
-                    data_accettazione_frase,
-                    data_aggiornamento,
-                    autore_modifica,
-                    frase_modifica,
-                    collegamento
-                ) VALUES (
-                    NOW(),
-                    posizione_frase_da_raccordare + verso_int + riga_ordinamento.offset_posizione + steps,
-                    TRUE,
-                    NOW(),
-                    NOW(),
-                    (SELECT autore_articolo FROM articolo WHERE id_articolo = articolo_riferimento),
-                    riga_ordinamento.new_id_frase,
-                    NULL
-                );
-        END;
-    $procedure$;
-
-
 CREATE OR REPLACE FUNCTION scaling_modifiche (posizione_originale INTEGER,
                                               data_inserimento_modifica modifiche.data_creazione %TYPE,
                                               articolo articoli.titolo %TYPE)
@@ -563,7 +508,7 @@ AS $function$
 $function$;
 
 
-izione_modifica INTEGER, data_aggiornamento_minima modifiche.data_creazione%TYPE, articolo articoli.titolo%TYPE) --restituisce il numero di modifiche che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
+CREATE OR REPLACE FUNCTION get_modifiche_in_stessa_posizione(posizione_modifica INTEGER, data_aggiornamento_minima modifiche.data_creazione%TYPE, articolo articoli.titolo%TYPE) --restituisce il numero di modifiche che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$

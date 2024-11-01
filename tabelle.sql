@@ -29,8 +29,6 @@ CREATE TABLE modifiche (
 CREATE TABLE ordinamento_modifiche (
 	modifica_da_ordinare INT,
 	offset_posizione INT,
-	verso_raccordo_sinistra VARCHAR(255),
-	frase_raccordo_destra VARCHAR(255),
 
 	PRIMARY KEY (modifica_da_ordinare),
 	FOREIGN KEY (modifica_da_ordinare) REFERENCES modifiche (id_modifica)
