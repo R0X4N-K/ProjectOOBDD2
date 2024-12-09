@@ -16,48 +16,48 @@ INSERT ON articoli FOR EACH ROW EXECUTE FUNCTION inserimento_articolo();
 
 
 
-CREATE OR REPLACE FUNCTION inserimento_modifica()
+CREATE OR REPLACE FUNCTION inserimento_contesto()
     RETURNS trigger
     LANGUAGE plpgsql
     AS $function$
-        DECLARE autore_articolo_modifica articoli.autore_articolo%TYPE;
-        articolo_originale articoli.titolo%TYPE := (get_articolo_from_frase(NEW.frase_modifica));
+        DECLARE autore_articolo_contesto articoli.autore_articolo%TYPE;
+        articolo_originale articoli.titolo%TYPE := (get_articolo_from_frase(NEW.testo_frase));
         posizione_partenza_spostamento INTEGER;
-        posizione_massima INTEGER := (SELECT COUNT(*) FROM modifiche AS m
-                                      INNER JOIN frasi AS f
-                                      ON m.frase_modifica = f.id_frase
+        posizione_massima INTEGER := (SELECT COUNT(*) FROM contesti_frasi AS m
+                                      INNER JOIN testi_frasi AS f
+                                      ON m.testo_frase = f.id_testo_frase
                                       WHERE f.articolo_contenitore = articolo_originale AND 
                                       m.accettazione = true AND
-                                      m.frase_modifica != NEW.frase_modifica AND
-                                      data_aggiornamento = get_max_data_aggiornamento(m.frase_modifica));
+                                      m.testo_frase != NEW.testo_frase AND
+                                      data_aggiornamento = get_max_data_aggiornamento(m.testo_frase));
         BEGIN
             IF NEW.posizione < -1
                 THEN RAISE EXCEPTION 'La posizione di una frase non può essere minore di -1';
             END IF;
 
-            CALL controlli_modifiche_base(NEW);
+            CALL controlli_contesti_frasi_base(NEW);
             IF NEW.posizione > posizione_massima
             THEN
-                RAISE EXCEPTION 'Posizione modifica > posizione massima possibile per questo articolo';
+                RAISE EXCEPTION 'Posizione contesto > posizione massima possibile per questo articolo';
             END IF;
 
 
             NEW.accettazione := false;
-            autore_articolo_modifica  := (SELECT autore_articolo FROM articoli
-                                    INNER JOIN frasi
-                                    ON articoli.titolo = frasi.articolo_contenitore
-                                    WHERE frasi.id_frase = NEW.frase_modifica);
-            IF NEW.autore_modifica = autore_articolo_modifica
+            autore_articolo_contesto  := (SELECT autore_articolo FROM articoli
+                                    INNER JOIN testi_frasi
+                                    ON articoli.titolo = testi_frasi.articolo_contenitore
+                                    WHERE testi_frasi.id_testo_frase = NEW.testo_frase);
+            IF NEW.autore_contesto = autore_articolo_contesto
             THEN
-                IF NOT get_existence_modifiche_in_attesa_in_articolo (NOW()::timestamp, articolo_originale) THEN
+                IF NOT get_existence_contesti_frasi_in_attesa_in_articolo (NOW()::timestamp, articolo_originale) THEN
                     
                     IF NEW.posizione = -1
                     THEN
                         posizione_partenza_spostamento :=
-                            (SELECT posizione FROM modifiche
-                            WHERE frase_modifica = NEW.frase_modifica AND
+                            (SELECT posizione FROM contesti_frasi
+                            WHERE testo_frase = NEW.testo_frase AND
                             accettazione = true AND
-                            data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
+                            data_aggiornamento = get_max_data_aggiornamento(NEW.testo_frase));
                     ELSE
                         posizione_partenza_spostamento := NEW.posizione;
                     END IF;
@@ -66,9 +66,9 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                     NEW.data_aggiornamento := NOW();
                     NEW.accettazione := true;
 
-                    CALL spostamento_modifiche (CASE WHEN NEW.posizione = -1 THEN -1 ELSE 1 END,
+                    CALL spostamento_contesti_frasi (CASE WHEN NEW.posizione = -1 THEN -1 ELSE 1 END,
                         articolo_originale,
-                        NEW.frase_modifica,
+                        NEW.testo_frase,
                         posizione_partenza_spostamento);
 
                     END IF;
@@ -77,8 +77,8 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
                     THEN
                         NEW.data_accettazione_frase := NULL;
                         NEW.data_aggiornamento := NULL;
-                        -- INSERT INTO ordinamento_modifiche (modifica_da_ordinare)
-                        -- VALUES (NEW.id_modifica);
+                        -- INSERT INTO merge_modifiche (contesto_da_ordinare)
+                        -- VALUES (NEW.id_contesto);
                     END IF;
                 END IF;
                 NEW.data_creazione := NOW();
@@ -89,48 +89,48 @@ CREATE OR REPLACE FUNCTION inserimento_modifica()
 
 
 
-CREATE TRIGGER creazione_modifica BEFORE
-INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
+CREATE TRIGGER creazione_contesto BEFORE
+INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
 
 
 
-CREATE OR REPLACE FUNCTION aggiornamento_modifica() RETURNS trigger
+CREATE OR REPLACE FUNCTION aggiornamento_contesto() RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
     DECLARE
         steps INTEGER := 1;
         old_posizione INTEGER;
-        articolo_riferimento frasi.articolo_contenitore%TYPE;
-        riga_ordinamento ordinamento_modifiche%ROWTYPE;
-        old_data_accettazione modifiche.data_accettazione_frase%TYPE;
-        data_aggiornamento_mod_originale modifiche.data_aggiornamento%TYPE:= NOW();
+        articolo_riferimento testi_frasi.articolo_contenitore%TYPE;
+        riga_ordinamento merge_modifiche%ROWTYPE;
+        old_data_accettazione contesti_frasi.data_accettazione_frase%TYPE;
+        data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE:= NOW();
         scaling_mod INTEGER;
         formuletta INTEGER;
     BEGIN
-        IF is_modifica_revisionata(OLD, NEW)
+        IF is_contesto_revisionata(OLD, NEW)
         THEN
-            RAISE EXCEPTION 'Modifica già revisionata/non modificabile';
+            RAISE EXCEPTION 'contesto già revisionato/non modificabile';
         END IF;
 
-        articolo_riferimento := get_articolo_from_frase(OLD.frase_modifica);
+        articolo_riferimento := get_articolo_from_frase(OLD.testo_frase);
 
-        IF get_existence_modifiche_in_attesa_in_articolo (OLD.data_creazione, articolo_riferimento) THEN
-            RAISE EXCEPTION 'Altre modifiche da revisionare per questo testo';
+        IF get_existence_contesti_frasi_in_attesa_in_articolo (OLD.data_creazione, articolo_riferimento) THEN
+            RAISE EXCEPTION 'Altre contesti_frasi da revisionare per questo testo';
         END IF;
 
 
         SELECT * INTO riga_ordinamento
-        FROM ordinamento_modifiche
-        WHERE modifica_da_ordinare = OLD.id_modifica;
+        FROM merge_modifiche
+        WHERE contesto_da_ordinare = OLD.id_contesto;
         
-        CALL controlli_modifiche_base(NEW);
+        CALL controlli_contesti_frasi_base(NEW);
         old_data_accettazione := (SELECT data_accettazione_frase
-                                  FROM modifiche
-                                  WHERE frase_modifica = NEW.frase_modifica AND
+                                  FROM contesti_frasi
+                                  WHERE testo_frase = NEW.testo_frase AND
                                   accettazione = true AND
-                                  data_aggiornamento = get_max_data_aggiornamento(NEW.frase_modifica));
+                                  data_aggiornamento = get_max_data_aggiornamento(NEW.testo_frase));
         
-        scaling_mod := scaling_modifiche(old_posizione, NEW.data_creazione, articolo_riferimento);
+        scaling_mod := scaling_contesti_frasi(old_posizione, NEW.data_creazione, articolo_riferimento);
 
         data_aggiornamento_mod_originale :=
             CASE WHEN scaling_mod != 0
@@ -151,7 +151,7 @@ AS $function$
         THEN
             IF riga_ordinamento IS NULL
             THEN
-                RAISE EXCEPTION 'Frase non ordinabile (manca una entry in ordinamento_modifiche)';
+                RAISE EXCEPTION 'Frase non ordinabile (manca una entry in merge_modifiche)';
             END IF;
             IF riga_ordinamento.visionato = FALSE
             THEN
@@ -159,36 +159,36 @@ AS $function$
             END IF;
             
             old_posizione := CASE WHEN NEW.posizione = -1 THEN 
-                            get_ultima_posizione_positiva(NEW.frase_modifica, NOW()::timestamp - INTERVAL '1 microsecond')
+                            get_ultima_posizione_positiva(NEW.testo_frase, NOW()::timestamp - INTERVAL '1 microsecond')
                             ELSE NEW.posizione
                             END;
 
             formuletta := (scaling_mod -
-                          (get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_ordinamento.offset_posizione));
+                          (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_ordinamento.offset_posizione));
 
             RAISE NOTICE 'old_posizione = %', old_posizione;
 
         
             RAISE NOTICE 'formuletta: % - (% - %) = %', scaling_mod,
-                get_modifiche_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_ordinamento.offset_posizione,
+                get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_ordinamento.offset_posizione,
                 formuletta;
 
             IF (NEW.posizione = -1) THEN
                 steps := -1;
             ELSE
 
-                DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
+                DROP TRIGGER IF EXISTS creazione_contesto ON contesti_frasi;
 
                 IF scaling_mod != 0
                 THEN
-                    INSERT INTO modifiche (
+                    INSERT INTO contesti_frasi (
                         data_creazione,
                         posizione,
                         accettazione,
                         data_accettazione_frase,
                         data_aggiornamento,
-                        autore_modifica,
-                        frase_modifica,
+                        autore_contesto,
+                        testo_frase,
                         collegamento
                     ) VALUES (
                         NEW.data_creazione,
@@ -196,37 +196,37 @@ AS $function$
                         NEW.accettazione,
                         NEW.data_accettazione_frase,
                         NOW(),
-                        NEW.autore_modifica,
-                        NEW.frase_modifica,
+                        NEW.autore_contesto,
+                        NEW.testo_frase,
                         NEW.collegamento
                     );
                 END IF;
 
-                CREATE TRIGGER creazione_modifica BEFORE
-                INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
+                CREATE TRIGGER creazione_contesto BEFORE
+                INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
             END IF;
             
         
-        DELETE FROM ordinamento_modifiche WHERE modifica_da_ordinare = NEW.id_modifica;
+        DELETE FROM merge_modifiche WHERE contesto_da_ordinare = NEW.id_contesto;
         END IF;
 
 
-        CALL spostamento_modifiche(steps + riga_ordinamento.offset_posizione,
+        CALL spostamento_contesti_frasi(steps + riga_ordinamento.offset_posizione,
             articolo_riferimento,
-            NEW.frase_modifica,
+            NEW.testo_frase,
             old_posizione + formuletta);
 
         RETURN NEW;
     END;
 $function$;
 
-CREATE TRIGGER revisione_modifiche BEFORE
-UPDATE ON modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_modifica();
+CREATE TRIGGER revisione_contesti_frasi BEFORE
+UPDATE ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION aggiornamento_contesto();
 
 
 
 
-CREATE OR REPLACE FUNCTION inserimento_ordinamento_modifiche ()
+CREATE OR REPLACE FUNCTION inserimento_merge_modifiche ()
     RETURNS trigger
     LANGUAGE plpgsql
     AS $function$
@@ -237,26 +237,26 @@ CREATE OR REPLACE FUNCTION inserimento_ordinamento_modifiche ()
 	END;
     $function$;
 
-CREATE TRIGGER creazione_ordinamento_modifiche BEFORE
-INSERT ON ordinamento_modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_ordinamento_modifiche();
+CREATE TRIGGER creazione_merge_modifiche BEFORE
+INSERT ON merge_modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_merge_modifiche();
 
 
 
 
-CREATE OR REPLACE FUNCTION aggiornamento_ordinamento_modifiche ()
+CREATE OR REPLACE FUNCTION aggiornamento_merge_modifiche ()
     RETURNS trigger
     LANGUAGE plpgsql
     AS $function$
     DECLARE
-		data_inserimento_modifica modifiche.data_creazione%TYPE :=
-        (SELECT data_creazione FROM modifiche WHERE id_modifica = NEW.modifica_da_ordinare);
-    	articolo articoli.titolo%TYPE := (SELECT articolo_contenitore FROM frasi
-										  INNER JOIN modifiche
-										  ON id_frase = frase_modifica
-										  WHERE id_modifica = NEW.modifica_da_ordinare);
+		data_inserimento_contesto contesti_frasi.data_creazione%TYPE :=
+        (SELECT data_creazione FROM contesti_frasi WHERE id_contesto = NEW.contesto_da_ordinare);
+    	articolo articoli.titolo%TYPE := (SELECT articolo_contenitore FROM testi_frasi
+										  INNER JOIN contesti_frasi
+										  ON id_testo_frase = testo_frase
+										  WHERE id_contesto = NEW.contesto_da_ordinare);
 		posizione_originale INTEGER := (SELECT posizione
-										FROM modifiche
-										WHERE id_modifica = NEW.modifica_da_ordinare);
+										FROM contesti_frasi
+										WHERE id_contesto = NEW.contesto_da_ordinare);
 	BEGIN
         IF NEW.visionato = FALSE
         THEN RAISE EXCEPTION 'visionato non può essere false';
@@ -264,71 +264,71 @@ CREATE OR REPLACE FUNCTION aggiornamento_ordinamento_modifiche ()
 
         IF NEW.offset_posizione < 0 OR
             NEW.offset_posizione > (SELECT COUNT(*)
-                                    FROM modifiche
-									INNER JOIN frasi
-									ON frase_modifica = id_frase
-                                    WHERE data_aggiornamento >= data_inserimento_modifica AND
+                                    FROM contesti_frasi
+									INNER JOIN testi_frasi
+									ON testo_frase = id_testo_frase
+                                    WHERE data_aggiornamento >= data_inserimento_contesto AND
 									accettazione = true AND
 									articolo_contenitore = articolo AND
 									posizione = posizione_originale
                                     )
         THEN
-            RAISE EXCEPTION 'non si può avere offset_posizione minore di 0 o maggiore delle modifiche accettate destinate a quella posizione';
+            RAISE EXCEPTION 'non si può avere offset_posizione minore di 0 o maggiore delle contesti_frasi accettate destinate a quella posizione';
         END IF;
         RETURN NEW;
     END;
     $function$;
 
-CREATE TRIGGER revisione_ordinamento_modifiche BEFORE
-UPDATE ON ordinamento_modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_ordinamento_modifiche();
+CREATE TRIGGER revisione_merge_modifiche BEFORE
+UPDATE ON merge_modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_merge_modifiche();
 
-CREATE OR REPLACE PROCEDURE spostamento_modifiche (offset_posizione INTEGER, articolo VARCHAR(255), frase_pivot INTEGER, posizione_partenza INTEGER)
+CREATE OR REPLACE PROCEDURE spostamento_contesti_frasi (offset_posizione INTEGER, articolo VARCHAR(255), frase_pivot INTEGER, posizione_partenza INTEGER)
 LANGUAGE plpgsql
 AS $procedure$
     DECLARE
-        cursore_modifiche CURSOR FOR (
+        cursore_contesti_frasi CURSOR FOR (
             SELECT m.*
-            FROM frasi f
-            INNER JOIN modifiche m ON f.id_frase = m.frase_modifica
+            FROM testi_frasi f
+            INNER JOIN contesti_frasi m ON f.id_testo_frase = m.testo_frase
             WHERE f.articolo_contenitore = articolo
             AND m.accettazione = TRUE
-            AND f.id_frase != frase_pivot
+            AND f.id_testo_frase != frase_pivot
             AND m.posizione >= posizione_partenza
 			AND m.data_aggiornamento = (
 			  	SELECT MAX(m2.data_aggiornamento)
-			  	FROM modifiche m2
-			  	WHERE m2.frase_modifica = m.frase_modifica AND
+			  	FROM contesti_frasi m2
+			  	WHERE m2.testo_frase = m.testo_frase AND
                 accettazione = TRUE
 			)
 
         );
     BEGIN
-        DROP TRIGGER IF EXISTS creazione_modifica ON modifiche;
+        DROP TRIGGER IF EXISTS creazione_contesto ON contesti_frasi;
 
-        FOR modifica_corrente IN cursore_modifiche LOOP
-            INSERT INTO modifiche (
+        FOR contesto_corrente IN cursore_contesti_frasi LOOP
+            INSERT INTO contesti_frasi (
                 data_creazione,
                 posizione,
                 accettazione,
                 data_accettazione_frase,
                 data_aggiornamento,
-                autore_modifica,
-                frase_modifica,
+                autore_contesto,
+                testo_frase,
                 collegamento
             ) VALUES (
                 NOW(),
-                modifica_corrente.posizione + offset_posizione,
-                modifica_corrente.accettazione,
-                modifica_corrente.data_accettazione_frase,
+                contesto_corrente.posizione + offset_posizione,
+                contesto_corrente.accettazione,
+                contesto_corrente.data_accettazione_frase,
                 NOW(),
-                modifica_corrente.autore_modifica,
-                modifica_corrente.frase_modifica,
-                modifica_corrente.collegamento
+                contesto_corrente.autore_contesto,
+                contesto_corrente.testo_frase,
+                contesto_corrente.collegamento
             );
         END LOOP;
 
-        CREATE TRIGGER creazione_modifica BEFORE
-        INSERT ON modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_modifica();
+        CREATE TRIGGER creazione_contesto BEFORE
+        INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
     END;
 $procedure$;
 
@@ -338,25 +338,25 @@ CREATE OR REPLACE FUNCTION is_frase_cancellata (frase INTEGER)
     LANGUAGE plpgsql
     as $function$
         BEGIN
-        RETURN EXISTS (SELECT * FROM modifiche
-        WHERE frase_modifica = frase AND
+        RETURN EXISTS (SELECT * FROM contesti_frasi
+        WHERE testo_frase = frase AND
         posizione = -1 AND
         accettazione = true);
         END;
     $function$;
 
-CREATE OR REPLACE FUNCTION modifica_analoga_exists (modifica modifiche)
+CREATE OR REPLACE FUNCTION contesto_analogo_exists (contesto contesti_frasi)
     RETURNS BOOLEAN
     LANGUAGE plpgsql
     as $function$
         BEGIN
         RETURN EXISTS (
-                SELECT * FROM modifiche WHERE
-                frase_modifica = modifica.frase_modifica AND
-                posizione = modifica.posizione AND
+                SELECT * FROM contesti_frasi WHERE
+                testo_frase = contesto.testo_frase AND
+                posizione = contesto.posizione AND
                 accettazione = TRUE AND
-                data_aggiornamento = (SELECT MAX(data_aggiornamento) FROM modifiche
-                WHERE frase_modifica = modifica.frase_modifica AND accettazione = TRUE)
+                data_aggiornamento = (SELECT MAX(data_aggiornamento) FROM contesti_frasi
+                WHERE testo_frase = contesto.testo_frase AND accettazione = TRUE)
             );
         END;
     $function$;
@@ -383,74 +383,74 @@ CREATE OR REPLACE FUNCTION is_frase_in_articolo (frase INTEGER)
             articolo articoli.titolo%TYPE := get_articolo_from_frase(frase);
         BEGIN
             RETURN EXISTS (
-                SELECT m.posizione, f.testo, f.id_frase, m.id_modifica
-                FROM modifiche m
-                INNER JOIN frasi f ON f.id_frase = m.frase_modifica
+                SELECT m.posizione, f.testo, f.id_testo_frase, m.id_contesto
+                FROM contesti_frasi m
+                INNER JOIN testi_frasi f ON f.id_testo_frase = m.testo_frase
                 WHERE f.articolo_contenitore = articolo
                 AND m.accettazione = TRUE
                 AND m.posizione > -1
                 AND m.data_aggiornamento = (
                     SELECT MAX(m2.data_aggiornamento)
-                    FROM modifiche m2
-                    WHERE m2.frase_modifica = m.frase_modifica
+                    FROM contesti_frasi m2
+                    WHERE m2.testo_frase = m.testo_frase
                 )
-                AND f.id_frase = frase
+                AND f.id_testo_frase = frase
             );
         END;
     $function$;
 
-CREATE OR REPLACE FUNCTION scaling_modifiche (posizione_originale INTEGER,
-                                              data_inserimento_modifica modifiche.data_creazione %TYPE,
+CREATE OR REPLACE FUNCTION scaling_contesti_frasi (posizione_originale INTEGER,
+                                              data_inserimento_contesto contesti_frasi.data_creazione %TYPE,
                                               articolo articoli.titolo %TYPE)
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$
     DECLARE
-        id_frase_modifica INTEGER := (SELECT frase_modifica
-                             FROM modifiche
-                             INNER JOIN frasi ON id_frase = frase_modifica
+        id_testo_frase INTEGER := (SELECT testo_frase
+                             FROM contesti_frasi
+                             INNER JOIN testi_frasi ON id_testo_frase = testo_frase
                              WHERE posizione = posizione_originale AND
                                    accettazione = true AND
                                    articolo_contenitore = articolo AND
                                    data_aggiornamento = (SELECT MAX (data_aggiornamento)
-                                                         FROM modifiche WHERE data_aggiornamento <
-                                                         data_inserimento_modifica AND
+                                                         FROM contesti_frasi WHERE data_aggiornamento <
+                                                         data_inserimento_contesto AND
                                                          accettazione = true AND
                                                          articolo_contenitore = articolo));
 
 
-        ultima_posizione_positiva INTEGER := get_ultima_posizione_positiva(id_frase_modifica, (SELECT MAX (data_aggiornamento)
-                                                                           FROM modifiche WHERE posizione > -1 AND
-                                                                           frase_modifica = id_frase_modifica AND
+        ultima_posizione_positiva INTEGER := get_ultima_posizione_positiva(id_testo_frase, (SELECT MAX (data_aggiornamento)
+                                                                           FROM contesti_frasi WHERE posizione > -1 AND
+                                                                           testo_frase = id_testo_frase AND
                                                                            accettazione = true));
     BEGIN
-        RETURN CASE WHEN id_frase_modifica IS NULL THEN 0 ELSE ultima_posizione_positiva - posizione_originale END;
+        RETURN CASE WHEN id_testo_frase IS NULL THEN 0 ELSE ultima_posizione_positiva - posizione_originale END;
     END;
 $function$;
 
 
-CREATE OR REPLACE PROCEDURE controlli_modifiche_base (modifica_da_controllare modifiche)
+CREATE OR REPLACE PROCEDURE controlli_contesti_frasi_base (contesto_da_controllare contesti_frasi)
 LANGUAGE plpgsql
 AS $procedure$
     BEGIN
-        IF is_frase_cancellata(modifica_da_controllare.frase_modifica)
+        IF is_frase_cancellata(contesto_da_controllare.testo_frase)
         THEN 
             RAISE EXCEPTION 'Frase già cancellata';
         END IF;
 
-        IF modifica_da_controllare.posizione > -1 AND is_frase_in_articolo(modifica_da_controllare.frase_modifica)
+        IF contesto_da_controllare.posizione > -1 AND is_frase_in_articolo(contesto_da_controllare.testo_frase)
         THEN
             RAISE EXCEPTION 'frase già presente';
         END IF;
 
-        IF modifica_da_controllare.posizione = -1 AND NOT is_frase_in_articolo(modifica_da_controllare.frase_modifica)
+        IF contesto_da_controllare.posizione = -1 AND NOT is_frase_in_articolo(contesto_da_controllare.testo_frase)
         THEN
             RAISE EXCEPTION 'frase non cancellabile (non è presente nell''articolo)';
         END IF;
 
-        IF modifica_analoga_exists (modifica_da_controllare.*)
+        IF contesto_analogo_exists (contesto_da_controllare.*)
         THEN
-            RAISE EXCEPTION 'Modifica analoga già inserita';
+            RAISE EXCEPTION 'contesto analoga già inserita';
         END IF;
     END;
 $procedure$;
@@ -459,82 +459,82 @@ CREATE OR REPLACE FUNCTION get_articolo_from_frase (frase INTEGER) RETURNS artic
 LANGUAGE plpgsql
 AS $function$
     BEGIN 
-        RETURN (SELECT articolo_contenitore FROM frasi WHERE id_frase = frase)
+        RETURN (SELECT articolo_contenitore FROM testi_frasi WHERE id_testo_frase = frase)
     END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION is_modifica_revisionata (old_modifica modifiche, new_modifica modifiche)
+CREATE OR REPLACE FUNCTION is_contesto_revisionato (old_contesto contesti_frasi, new_contesto contesti_frasi)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-    RETURN NOT ((new_modifica.id_modifica = old_modifica.id_modifica AND
-                 new_modifica.data_creazione = old_modifica.data_creazione AND
-                 new_modifica.posizione = old_modifica.posizione AND
-                 new_modifica.autore_modifica = old_modifica.autore_modifica AND
-                 new_modifica.frase_modifica = old_modifica.frase_modifica AND
-                 new_modifica.collegamento = old_modifica.collegamento) AND
-                old_modifica.data_aggiornamento IS NULL);
+    RETURN NOT ((new_contesto.id_contesto = old_contesto.id_contesto AND
+                 new_contesto.data_creazione = old_contesto.data_creazione AND
+                 new_contesto.posizione = old_contesto.posizione AND
+                 new_contesto.autore_contesto = old_contesto.autore_contesto AND
+                 new_contesto.testo_frase = old_contesto.testo_frase AND
+                 new_contesto.collegamento = old_contesto.collegamento) AND
+                old_contesto.data_aggiornamento IS NULL);
     END;
 $function$;
 
-CREATE OR REPLACE FUNCTION get_existence_modifiche_in_attesa_in_articolo (data_creazione_minima modifiche.data_creazione%TYPE, articolo_riferimento articoli.titolo%TYPE)
+CREATE OR REPLACE FUNCTION get_existence_contesti_frasi_in_attesa_in_articolo (data_creazione_minima contesti_frasi.data_creazione%TYPE, articolo_riferimento articoli.titolo%TYPE)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-    RETURN EXISTS (SELECT * FROM modifiche
-                  INNER JOIN frasi 
-                  ON frasi.id_frase = modifiche.frase_modifica
+    RETURN EXISTS (SELECT * FROM contesti_frasi
+                  INNER JOIN testi_frasi 
+                  ON testi_frasi.id_testo_frase = contesti_frasi.testo_frase
                   WHERE data_creazione < data_creazione_minima AND
                   accettazione = false AND
                   data_aggiornamento IS NULL AND
-                  frasi.articolo_contenitore = articolo_riferimento);
+                  testi_frasi.articolo_contenitore = articolo_riferimento);
     END;
 $function$;
 
 CREATE OR REPLACE FUNCTION get_max_data_aggiornamento(frase INTEGER)
-RETURNS modifiche.data_aggiornamento%TYPE
+RETURNS contesti_frasi.data_aggiornamento%TYPE
 LANGUAGE plpgsql
 AS $function$
     BEGIN
         RETURN (SELECT MAX(data_aggiornamento)
-                FROM modifiche
-                WHERE frase_modifica = frase AND
+                FROM contesti_frasi
+                WHERE testo_frase = frase AND
                 accettazione = true
                 );
     END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION get_modifiche_in_stessa_posizione(posizione_modifica INTEGER, data_aggiornamento_minima modifiche.data_creazione%TYPE, articolo articoli.titolo%TYPE) --restituisce il numero di modifiche che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
+CREATE OR REPLACE FUNCTION get_contesti_frasi_in_stessa_posizione(posizione_contesto INTEGER, data_aggiornamento_minima contesti_frasi.data_creazione%TYPE, articolo articoli.titolo%TYPE) --restituisce il numero di contesti_frasi che hanno data_creazione != data_aggiornamento, che sono state effettuate in una posizione arbitraria e create dopo una specifica data
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-    RETURN (SELECT COUNT(*) FROM modifiche
-            INNER JOIN frasi
-			ON frase_modifica = id_frase
+    RETURN (SELECT COUNT(*) FROM contesti_frasi
+            INNER JOIN testi_frasi
+			ON testo_frase = id_testo_frase
             WHERE data_aggiornamento > data_aggiornamento_minima AND
             accettazione = true AND
             data_creazione != data_aggiornamento AND
-            posizione = posizione_modifica AND
+            posizione = posizione_contesto AND
             articolo_contenitore = articolo
             );
     END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION get_ultima_posizione_positiva (frase INTEGER, max_data_aggiornamento modifiche.data_aggiornamento%TYPE)
+CREATE OR REPLACE FUNCTION get_ultima_posizione_positiva (frase INTEGER, max_data_aggiornamento contesti_frasi.data_aggiornamento%TYPE)
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$
     BEGIN
         RETURN (
                     SELECT posizione
-                    FROM modifiche
-                    WHERE frase_modifica = frase AND 
+                    FROM contesti_frasi
+                    WHERE testo_frase = frase AND 
                     posizione > -1 AND 
                     accettazione = true AND
                     data_aggiornamento <= max_data_aggiornamento
