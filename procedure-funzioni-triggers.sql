@@ -101,7 +101,7 @@ AS $function$
         steps INTEGER := 1;
         old_posizione INTEGER;
         articolo_riferimento testi_frasi.articolo_contenitore%TYPE;
-        riga_ordinamento merge_modifiche%ROWTYPE;
+        riga_merge merge_modifiche%ROWTYPE;
         old_data_accettazione contesti_frasi.data_accettazione_frase%TYPE;
         data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE:= NOW();
         scaling_mod INTEGER;
@@ -119,7 +119,7 @@ AS $function$
         END IF;
 
 
-        SELECT * INTO riga_ordinamento
+        SELECT * INTO riga_merge
         FROM merge_modifiche
         WHERE contesto_da_ordinare = OLD.id_contesto;
         
@@ -149,11 +149,11 @@ AS $function$
         
         IF NEW.accettazione = TRUE
         THEN
-            IF riga_ordinamento IS NULL
+            IF riga_merge IS NULL
             THEN
                 RAISE EXCEPTION 'Frase non ordinabile (manca una entry in merge_modifiche)';
             END IF;
-            IF riga_ordinamento.visionato = FALSE
+            IF riga_merge.visionato = FALSE
             THEN
                 RAISE EXCEPTION 'Frase non ordinata';
             END IF;
@@ -164,13 +164,13 @@ AS $function$
                             END;
 
             formuletta := (scaling_mod -
-                          (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_ordinamento.offset_posizione));
+                          (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_merge.offset_posizione));
 
             RAISE NOTICE 'old_posizione = %', old_posizione;
 
         
             RAISE NOTICE 'formuletta: % - (% - %) = %', scaling_mod,
-                get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_ordinamento.offset_posizione,
+                get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_merge.offset_posizione,
                 formuletta;
 
             IF (NEW.posizione = -1) THEN
@@ -211,7 +211,7 @@ AS $function$
         END IF;
 
 
-        CALL spostamento_contesti_frasi(steps + riga_ordinamento.offset_posizione,
+        CALL spostamento_contesti_frasi(steps + riga_merge.offset_posizione,
             articolo_riferimento,
             NEW.testo_frase,
             old_posizione + formuletta);
