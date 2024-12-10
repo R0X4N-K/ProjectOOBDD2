@@ -62,7 +62,7 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                         posizione_partenza_spostamento := NEW.posizione;
                     END IF;
                     
-                    NEW.data_accettazione_frase := NOW();
+                    NEW.data_accettazione_testo := NOW();
                     NEW.data_aggiornamento := NOW();
                     NEW.accettazione := true;
 
@@ -75,7 +75,7 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                 ELSE
                     IF NEW.accettazione = false
                     THEN
-                        NEW.data_accettazione_frase := NULL;
+                        NEW.data_accettazione_testo := NULL;
                         NEW.data_aggiornamento := NULL;
                         -- INSERT INTO merge_modifiche (contesto_da_ordinare)
                         -- VALUES (NEW.id_contesto);
@@ -102,10 +102,10 @@ AS $function$
         old_posizione INTEGER;
         articolo_riferimento testi_frasi.articolo_contenitore%TYPE;
         riga_merge merge_modifiche%ROWTYPE;
-        old_data_accettazione contesti_frasi.data_accettazione_frase%TYPE;
-        data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE:= NOW();
+        old_data_accettazione contesti_frasi.data_accettazione_testo%TYPE;
+        data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE := NOW();
         scaling_mod INTEGER;
-        formuletta INTEGER;
+        addendo_posizione INTEGER;
     BEGIN
         IF is_contesto_revisionata(OLD, NEW)
         THEN
@@ -124,7 +124,7 @@ AS $function$
         WHERE contesto_da_ordinare = OLD.id_contesto;
         
         CALL controlli_contesti_frasi_base(NEW);
-        old_data_accettazione := (SELECT data_accettazione_frase
+        old_data_accettazione := (SELECT data_accettazione_testo
                                   FROM contesti_frasi
                                   WHERE testo_frase = NEW.testo_frase AND
                                   accettazione = true AND
@@ -141,9 +141,9 @@ AS $function$
             END;    
         IF old_data_accettazione IS NULL
             THEN
-                NEW.data_accettazione_frase := data_aggiornamento_mod_originale;
+                NEW.data_accettazione_testo := data_aggiornamento_mod_originale;
             ELSE
-                NEW.data_accettazione_frase := old_data_accettazione;
+                NEW.data_accettazione_testo := old_data_accettazione;
             END IF;
         NEW.data_aggiornamento := data_aggiornamento_mod_originale;
         
@@ -163,15 +163,15 @@ AS $function$
                             ELSE NEW.posizione
                             END;
 
-            formuletta := (scaling_mod -
+            addendo_posizione := (scaling_mod -
                           (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_merge.offset_posizione));
 
             RAISE NOTICE 'old_posizione = %', old_posizione;
 
         
-            RAISE NOTICE 'formuletta: % - (% - %) = %', scaling_mod,
+            RAISE NOTICE 'addendo_posizione: % - (% - %) = %', scaling_mod,
                 get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_merge.offset_posizione,
-                formuletta;
+                addendo_posizione;
 
             IF (NEW.posizione = -1) THEN
                 steps := -1;
@@ -185,16 +185,16 @@ AS $function$
                         data_creazione,
                         posizione,
                         accettazione,
-                        data_accettazione_frase,
+                        data_accettazione_testo,
                         data_aggiornamento,
                         autore_contesto,
                         testo_frase,
                         collegamento
                     ) VALUES (
                         NEW.data_creazione,
-                        NEW.posizione + formuletta,
+                        NEW.posizione + addendo_posizione,
                         NEW.accettazione,
-                        NEW.data_accettazione_frase,
+                        NEW.data_accettazione_testo,
                         NOW(),
                         NEW.autore_contesto,
                         NEW.testo_frase,
@@ -214,7 +214,11 @@ AS $function$
         CALL spostamento_contesti_frasi(steps + riga_merge.offset_posizione,
             articolo_riferimento,
             NEW.testo_frase,
-            old_posizione + formuletta);
+            old_posizione + addendo_posizione);
+            
+        UPDATE autore
+        SET rating = calc_rating(autore_articolo_contesto)
+        WHERE id_autore = autore_articolo_contesto;
 
         RETURN NEW;
     END;
@@ -310,7 +314,7 @@ AS $procedure$
                 data_creazione,
                 posizione,
                 accettazione,
-                data_accettazione_frase,
+                data_accettazione_testo,
                 data_aggiornamento,
                 autore_contesto,
                 testo_frase,
@@ -319,7 +323,7 @@ AS $procedure$
                 NOW(),
                 contesto_corrente.posizione + offset_posizione,
                 contesto_corrente.accettazione,
-                contesto_corrente.data_accettazione_frase,
+                contesto_corrente.data_accettazione_testo,
                 NOW(),
                 contesto_corrente.autore_contesto,
                 contesto_corrente.testo_frase,
@@ -541,5 +545,29 @@ AS $function$
                     ORDER BY data_aggiornamento DESC
                     LIMIT 1
                 );
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION calc_rating (autore autore.id_autore%TYPE)
+RETURNS DOUBLE PRECISION
+LANGUAGE plpgsql
+AS $function$
+    DECLARE
+    numero_articoli INTEGER;
+    modifiche_accettate INTEGER;
+    modifiche_proposte INTEGER;
+    BEGIN
+        numero_articoli := (SELECT COUNT(*) FROM articoli WHERE autore_articolo = autore);
+
+        modifiche_accettate := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
+            data_accettazione_testo IS NOT NULL AND 
+            (data_accettazione_testo = data_aggiornamento OR posizione = -1) AND
+            accettazione = true)
+
+        modifiche_proposte := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
+            data_accettazione_testo IS NOT NULL AND 
+            (data_accettazione_testo = data_aggiornamento OR posizione = -1));
+
+        RETURN numero_articoli / (modifiche_accettate / modifiche_proposte);
     END;
 $function$;

@@ -27,7 +27,7 @@ CREATE TABLE contesti_frasi (
 	data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	posizione INT NOT NULL,
 	accettazione BOOL DEFAULT false NOT NULL,
-	data_accettazione TIMESTAMP WITHOUT TIME ZONE,
+	data_accettazione_testo TIMESTAMP WITHOUT TIME ZONE,
 	data_aggiornamento TIMESTAMP WITHOUT TIME ZONE,
 	autore_contesto INT NOT NULL,
 	testo_frase INT NOT NULL,
