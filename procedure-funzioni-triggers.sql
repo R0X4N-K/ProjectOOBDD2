@@ -104,7 +104,7 @@ AS $function$
         riga_merge merge_modifiche%ROWTYPE;
         old_data_accettazione contesti_frasi.data_accettazione_testo%TYPE;
         data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE := NOW();
-        scaling_mod INTEGER;
+        varianza_posizione_contesto INTEGER;
         addendo_posizione INTEGER;
     BEGIN
         IF is_contesto_revisionata(OLD, NEW)
@@ -130,10 +130,10 @@ AS $function$
                                   accettazione = true AND
                                   data_aggiornamento = get_max_data_aggiornamento(NEW.testo_frase));
         
-        scaling_mod := scaling_contesti_frasi(old_posizione, NEW.data_creazione, articolo_riferimento);
+        varianza_posizione_contesto := calc_varianza_posizione_contesto_frasi(old_posizione, NEW.data_creazione, articolo_riferimento);
 
         data_aggiornamento_mod_originale :=
-            CASE WHEN scaling_mod != 0
+            CASE WHEN varianza_posizione_contesto != 0
             THEN
             (NOW() - INTERVAL '1 millisecond')
             ELSE
@@ -163,13 +163,13 @@ AS $function$
                             ELSE NEW.posizione
                             END;
 
-            addendo_posizione := (scaling_mod -
+            addendo_posizione := (varianza_posizione_contesto -
                           (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_merge.offset_posizione));
 
             RAISE NOTICE 'old_posizione = %', old_posizione;
 
         
-            RAISE NOTICE 'addendo_posizione: % - (% - %) = %', scaling_mod,
+            RAISE NOTICE 'addendo_posizione: % - (% - %) = %', varianza_posizione_contesto,
                 get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento), riga_merge.offset_posizione,
                 addendo_posizione;
 
@@ -179,7 +179,7 @@ AS $function$
 
                 DROP TRIGGER IF EXISTS creazione_contesto ON contesti_frasi;
 
-                IF scaling_mod != 0
+                IF varianza_posizione_contesto != 0
                 THEN
                     INSERT INTO contesti_frasi (
                         data_creazione,
@@ -403,7 +403,7 @@ CREATE OR REPLACE FUNCTION is_frase_in_articolo (frase INTEGER)
         END;
     $function$;
 
-CREATE OR REPLACE FUNCTION scaling_contesti_frasi (posizione_originale INTEGER,
+CREATE OR REPLACE FUNCTION calc_varianza_posizione_contesto_frasi (posizione_originale INTEGER,
                                               data_inserimento_contesto contesti_frasi.data_creazione %TYPE,
                                               articolo articoli.titolo %TYPE)
 RETURNS INTEGER
@@ -454,16 +454,16 @@ AS $procedure$
 
         IF contesto_analogo_exists (contesto_da_controllare.*)
         THEN
-            RAISE EXCEPTION 'contesto analoga già inserita';
+            RAISE EXCEPTION 'contesto analogo già inserita';
         END IF;
     END;
 $procedure$;
 
-CREATE OR REPLACE FUNCTION get_articolo_from_frase (frase INTEGER) RETURNS articoli.titolo%TYPE;
+CREATE OR REPLACE FUNCTION get_articolo_from_frase (frase INTEGER) RETURNS articoli.titolo%TYPE
 LANGUAGE plpgsql
 AS $function$
     BEGIN 
-        RETURN (SELECT articolo_contenitore FROM testi_frasi WHERE id_testo_frase = frase)
+        RETURN (SELECT articolo_contenitore FROM testi_frasi WHERE id_testo_frase = frase);
     END;
 $function$;
 
@@ -548,7 +548,7 @@ AS $function$
     END;
 $function$;
 
-CREATE OR REPLACE FUNCTION calc_rating (autore autore.id_autore%TYPE)
+CREATE OR REPLACE FUNCTION calc_rating (autore autori.id_autore%TYPE)
 RETURNS DOUBLE PRECISION
 LANGUAGE plpgsql
 AS $function$
@@ -562,7 +562,7 @@ AS $function$
         modifiche_accettate := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
             data_accettazione_testo IS NOT NULL AND 
             (data_accettazione_testo = data_aggiornamento OR posizione = -1) AND
-            accettazione = true)
+            accettazione = true);
 
         modifiche_proposte := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
             data_accettazione_testo IS NOT NULL AND 

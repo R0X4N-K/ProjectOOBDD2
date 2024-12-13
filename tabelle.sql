@@ -1,5 +1,5 @@
 CREATE TABLE articoli (
-    titolo VARCHAR(255) NOT NULL,
+    titolo VARCHAR(255) PRIMARY KEY,
     autore_articolo INT,
     data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL
 );
@@ -9,7 +9,7 @@ CREATE TABLE autori (
     password VARCHAR(512) NOT NULL,
     rating DOUBLE PRECISION,
     email VARCHAR(255) NOT NULL,
-    id_autore INT NOT NULL
+    id_autore INT PRIMARY KEY
 );
 
 CREATE TABLE testi_frasi (
@@ -36,14 +36,13 @@ CREATE TABLE contesti_frasi (
 	FOREIGN KEY (testo_frase) REFERENCES testi_frasi(id_testo_frase),
 	FOREIGN KEY (collegamento) REFERENCES articoli(titolo),
 
-	CHECK (data_creazione < data_revisione)
+	CHECK (data_creazione < data_aggiornamento)
 );
 
 
 CREATE TABLE merge_modifiche (
-	contesto_da_ordinare INT,
+	contesto_da_ordinare INT PRIMARY KEY,
 	offset_posizione INT,
 
-	PRIMARY KEY (contesto_da_ordinare),
 	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto)
 );
