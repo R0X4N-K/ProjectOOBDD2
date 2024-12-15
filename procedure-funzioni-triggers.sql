@@ -10,7 +10,7 @@ CREATE OR REPLACE FUNCTION inserimento_articolo()
     ;
 
 
-CREATE TRIGGER creazione_articolo BEFORE
+CREATE OR REPLACE TRIGGER creazione_articolo BEFORE
 INSERT ON articoli FOR EACH ROW EXECUTE FUNCTION inserimento_articolo();
 
 
@@ -23,13 +23,10 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
         DECLARE autore_articolo_contesto articoli.autore_articolo%TYPE;
         articolo_originale articoli.titolo%TYPE := (get_articolo_from_frase(NEW.testo_frase));
         posizione_partenza_spostamento INTEGER;
-        posizione_massima INTEGER := (SELECT COUNT(*) FROM contesti_frasi AS m
-                                      INNER JOIN testi_frasi AS f
-                                      ON m.testo_frase = f.id_testo_frase
-                                      WHERE f.articolo_contenitore = articolo_originale AND 
-                                      m.accettazione = true AND
-                                      m.testo_frase != NEW.testo_frase AND
-                                      data_aggiornamento = get_max_data_aggiornamento(m.testo_frase));
+        posizione_massima INTEGER := (SELECT COUNT(*) FROM get_modifiche_su_articolo(articolo_originale)
+                                      WHERE accettazione = true AND
+                                      testo_frase != NEW.testo_frase AND
+                                      data_aggiornamento = get_max_data_aggiornamento(testo_frase));
         BEGIN
             IF NEW.posizione < -1
                 THEN RAISE EXCEPTION 'La posizione di una frase non può essere minore di -1';
@@ -77,8 +74,6 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                     THEN
                         NEW.data_accettazione_testo := NULL;
                         NEW.data_aggiornamento := NULL;
-                        -- INSERT INTO merge_modifiche (contesto_da_ordinare)
-                        -- VALUES (NEW.id_contesto);
                     END IF;
                 END IF;
                 NEW.data_creazione := NOW();
@@ -89,7 +84,7 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
 
 
 
-CREATE TRIGGER creazione_contesto BEFORE
+CREATE OR REPLACE TRIGGER creazione_contesto BEFORE
 INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
 
 
@@ -202,7 +197,7 @@ AS $function$
                     );
                 END IF;
 
-                CREATE TRIGGER creazione_contesto BEFORE
+                CREATE OR REPLACE TRIGGER creazione_contesto BEFORE
                 INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
             END IF;
             
@@ -224,7 +219,7 @@ AS $function$
     END;
 $function$;
 
-CREATE TRIGGER revisione_contesti_frasi BEFORE
+CREATE OR REPLACE TRIGGER revisione_contesti_frasi BEFORE
 UPDATE ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION aggiornamento_contesto();
 
 
@@ -241,7 +236,7 @@ CREATE OR REPLACE FUNCTION inserimento_merge_modifiche ()
 	END;
     $function$;
 
-CREATE TRIGGER creazione_merge_modifiche BEFORE
+CREATE OR REPLACE TRIGGER creazione_merge_modifiche BEFORE
 INSERT ON merge_modifiche FOR EACH ROW EXECUTE FUNCTION inserimento_merge_modifiche();
 
 
@@ -268,12 +263,9 @@ CREATE OR REPLACE FUNCTION aggiornamento_merge_modifiche ()
 
         IF NEW.offset_posizione < 0 OR
             NEW.offset_posizione > (SELECT COUNT(*)
-                                    FROM contesti_frasi
-									INNER JOIN testi_frasi
-									ON testo_frase = id_testo_frase
+                                    FROM get_modifiche_su_articolo(articolo)
                                     WHERE data_aggiornamento >= data_inserimento_contesto AND
 									accettazione = true AND
-									articolo_contenitore = articolo AND
 									posizione = posizione_originale
                                     )
         THEN
@@ -283,7 +275,7 @@ CREATE OR REPLACE FUNCTION aggiornamento_merge_modifiche ()
     END;
     $function$;
 
-CREATE TRIGGER revisione_merge_modifiche BEFORE
+CREATE OR REPLACE TRIGGER revisione_merge_modifiche BEFORE
 UPDATE ON merge_modifiche FOR EACH ROW EXECUTE FUNCTION aggiornamento_merge_modifiche();
 
 CREATE OR REPLACE PROCEDURE spostamento_contesti_frasi (offset_posizione INTEGER, articolo VARCHAR(255), frase_pivot INTEGER, posizione_partenza INTEGER)
@@ -291,18 +283,16 @@ LANGUAGE plpgsql
 AS $procedure$
     DECLARE
         cursore_contesti_frasi CURSOR FOR (
-            SELECT m.*
-            FROM testi_frasi f
-            INNER JOIN contesti_frasi m ON f.id_testo_frase = m.testo_frase
-            WHERE f.articolo_contenitore = articolo
-            AND m.accettazione = TRUE
-            AND f.id_testo_frase != frase_pivot
-            AND m.posizione >= posizione_partenza
-			AND m.data_aggiornamento = (
-			  	SELECT MAX(m2.data_aggiornamento)
-			  	FROM contesti_frasi m2
-			  	WHERE m2.testo_frase = m.testo_frase AND
-                accettazione = TRUE
+            SELECT id_contesto, data_creazione, posizione, accettazione, data_aggiornamento, autore_contesto, testo_frase, collegamento, data_accettazione_testo
+            FROM get_modifiche_su_articolo(articolo)
+            WHERE accettazione = TRUE AND
+            id_testo_frase != frase_pivot AND
+            posizione >= posizione_partenza AND
+            data_aggiornamento = (
+			  	SELECT MAX(cf.data_aggiornamento)
+			  	FROM contesti_frasi cf
+			  	WHERE cf.testo_frase = testo_frase AND
+                accettazione = true
 			)
 
         );
@@ -331,7 +321,7 @@ AS $procedure$
             );
         END LOOP;
 
-        CREATE TRIGGER creazione_contesto BEFORE
+        CREATE OR REPLACE TRIGGER creazione_contesto BEFORE
         INSERT ON contesti_frasi FOR EACH ROW EXECUTE FUNCTION inserimento_contesto();
     END;
 $procedure$;
@@ -387,18 +377,9 @@ CREATE OR REPLACE FUNCTION is_frase_in_articolo (frase INTEGER)
             articolo articoli.titolo%TYPE := get_articolo_from_frase(frase);
         BEGIN
             RETURN EXISTS (
-                SELECT m.posizione, f.testo, f.id_testo_frase, m.id_contesto
-                FROM contesti_frasi m
-                INNER JOIN testi_frasi f ON f.id_testo_frase = m.testo_frase
-                WHERE f.articolo_contenitore = articolo
-                AND m.accettazione = TRUE
-                AND m.posizione > -1
-                AND m.data_aggiornamento = (
-                    SELECT MAX(m2.data_aggiornamento)
-                    FROM contesti_frasi m2
-                    WHERE m2.testo_frase = m.testo_frase
-                )
-                AND f.id_testo_frase = frase
+                SELECT posizione, testo, id_testo_frase, id_contesto
+                FROM ricostruzione_articolo(articolo, NOW()::timestamp) 
+                WHERE id_testo_frase = frase
             );
         END;
     $function$;
@@ -411,11 +392,9 @@ LANGUAGE plpgsql
 AS $function$
     DECLARE
         id_testo_frase INTEGER := (SELECT testo_frase
-                             FROM contesti_frasi
-                             INNER JOIN testi_frasi ON id_testo_frase = testo_frase
-                             WHERE posizione = posizione_originale AND
+                                    FROM get_modifiche_su_articolo(articolo)
+                                    WHERE posizione = posizione_originale AND
                                    accettazione = true AND
-                                   articolo_contenitore = articolo AND
                                    data_aggiornamento = (SELECT MAX (data_aggiornamento)
                                                          FROM contesti_frasi WHERE data_aggiornamento <
                                                          data_inserimento_contesto AND
@@ -488,13 +467,10 @@ RETURNS BOOLEAN
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-    RETURN EXISTS (SELECT * FROM contesti_frasi
-                  INNER JOIN testi_frasi 
-                  ON testi_frasi.id_testo_frase = contesti_frasi.testo_frase
+    RETURN EXISTS (SELECT * FROM get_modifiche_su_articolo(articolo_riferimento)
                   WHERE data_creazione < data_creazione_minima AND
                   accettazione = false AND
-                  data_aggiornamento IS NULL AND
-                  testi_frasi.articolo_contenitore = articolo_riferimento);
+                  data_aggiornamento IS NULL);
     END;
 $function$;
 
@@ -517,14 +493,11 @@ RETURNS INTEGER
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-    RETURN (SELECT COUNT(*) FROM contesti_frasi
-            INNER JOIN testi_frasi
-			ON testo_frase = id_testo_frase
+    RETURN (SELECT COUNT(*) FROM get_modifiche_su_articolo(articolo)
             WHERE data_aggiornamento > data_aggiornamento_minima AND
             accettazione = true AND
             data_creazione != data_aggiornamento AND
-            posizione = posizione_contesto AND
-            articolo_contenitore = articolo
+            posizione = posizione_contesto
             );
     END;
 $function$;
@@ -571,3 +544,89 @@ AS $function$
         RETURN numero_articoli / (modifiche_accettate / modifiche_proposte);
     END;
 $function$;
+
+
+CREATE OR REPLACE FUNCTION ricostruzione_articolo (articolo articoli.titolo%TYPE, data_articolo contesti_frasi.data_aggiornamento%TYPE)
+RETURNS SETOF testi_join_contesti
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN QUERY(SELECT * FROM get_modifiche_su_articolo(articolo)
+			WHERE accettazione = TRUE
+            AND posizione > -1
+            AND data_aggiornamento = (
+                SELECT MAX(cf2.data_aggiornamento)
+                FROM contesti_frasi cf2
+                WHERE cf2.testo_frase = testo_frase AND cf2.data_aggiornamento <= data_articolo
+                )
+                ORDER BY posizione
+        );
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION get_modifiche_su_articolo (articolo articoli.titolo%TYPE)
+RETURNS SETOF testi_join_contesti
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN QUERY(SELECT * FROM testi_join_contesti
+            WHERE articolo_contenitore = articolo
+        );
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION get_modifiche_di_autore (autore autori.id_autore%TYPE)
+RETURNS SETOF testi_join_contesti
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN QUERY(SELECT * FROM testi_join_contesti
+            WHERE autore_contesto = articolo
+        );
+    END;
+$function$;
+
+
+CREATE OR REPLACE FUNCTION crea_testo_frase (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE)
+RETURNS testi_frasi.id_testo_frase%TYPE
+LANGUAGE plpgsql
+AS $function$
+    DECLARE id_testo testi_frasi.id_testo_frase%TYPE;
+    BEGIN
+        INSERT INTO testi_frasi
+        (testo, articolo_contenitore)
+        VALUES
+        (testo_frase, articolo_di_appartenenza)
+        RETURNING id_testo_frase INTO id_testo;
+        RETURN id_testo;
+    END;
+$function$;
+
+
+CREATE OR REPLACE FUNCTION crea_contesto (frase testi_frasi.id_testo_frase%TYPE, posizione_contesto contesti_frasi.posizione%TYPE, autore contesti_frasi.autore_contesto%TYPE)
+RETURNS contesti_frasi.id_contesto%TYPE
+LANGUAGE plpgsql
+AS $function$
+    DECLARE
+        id_contesto_frase contesti_frasi.id_contesto%TYPE;
+    BEGIN
+        INSERT INTO contesti_frasi
+        (testo_frase, posizione, autore_contesto)
+        VALUES
+        (frase, posizione_contesto, autore)
+        RETURNING id_contesto INTO id_contesto_frase;
+        RETURN id_contesto_frase;
+    END;
+$function$;
+
+
+CREATE OR REPLACE PROCEDURE crea_frase_con_contesto (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE, posizione_contesto contesti_frasi.posizione%TYPE, autore contesti_frasi.autore_contesto%TYPE)
+LANGUAGE plpgsql
+AS $procedure$
+	DECLARE id_testo_frase INT;
+	id_contesto_frase INT;
+    BEGIN
+		id_testo_frase = crea_testo_frase (testo_frase, articolo_di_appartenenza);
+        id_contesto_frase = crea_contesto(id_testo_frase, posizione_contesto, autore);
+    END;
+$procedure$;

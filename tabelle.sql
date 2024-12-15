@@ -46,3 +46,8 @@ CREATE TABLE merge_modifiche (
 
 	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto)
 );
+
+
+CREATE VIEW testi_join_contesti as 
+(SELECT * FROM contesti_frasi cf
+INNER JOIN testi_frasi tf ON tf.id_testo_frase = cf.testo_frase)
