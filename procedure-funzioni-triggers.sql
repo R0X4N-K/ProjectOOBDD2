@@ -6,14 +6,11 @@ CREATE OR REPLACE FUNCTION inserimento_articolo()
 			NEW.data_creazione := NOW();
             RETURN NEW;
         END;
-    $function$
-    ;
+    $function$;
 
 
 CREATE OR REPLACE TRIGGER creazione_articolo BEFORE
 INSERT ON articoli FOR EACH ROW EXECUTE FUNCTION inserimento_articolo();
-
-
 
 
 CREATE OR REPLACE FUNCTION inserimento_contesto()
@@ -79,9 +76,7 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                 NEW.data_creazione := NOW();
                 RETURN NEW;
         END;
-    $function$
-    ;
-
+    $function$;
 
 
 CREATE OR REPLACE TRIGGER creazione_contesto BEFORE
@@ -102,7 +97,7 @@ AS $function$
         varianza_posizione_contesto INTEGER;
         addendo_posizione INTEGER;
     BEGIN
-        IF is_contesto_revisionata(OLD, NEW)
+        IF is_contesto_revisionato(OLD, NEW)
         THEN
             RAISE EXCEPTION 'contesto già revisionato/non modificabile';
         END IF;

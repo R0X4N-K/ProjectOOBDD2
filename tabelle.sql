@@ -43,6 +43,7 @@ CREATE TABLE contesti_frasi (
 CREATE TABLE merge_modifiche (
 	contesto_da_ordinare INT PRIMARY KEY,
 	offset_posizione INT,
+	visionato BOOLEAN,
 
 	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto)
 );
