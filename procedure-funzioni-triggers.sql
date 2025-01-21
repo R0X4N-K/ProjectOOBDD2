@@ -581,6 +581,35 @@ AS $function$
     END;
 $function$;
 
+CREATE OR REPLACE FUNCTION get_storico_articolo_di_autore(autore autori.id_autore%TYPE, articolo articoli.titolo%TYPE)
+RETURNS SETOF testi_join_contesti
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM articoli a
+            WHERE a.titolo = titolo_articolo
+            AND a.autore_articolo = id_autore
+        ) AND NOT EXISTS (
+            SELECT 1
+            FROM contesti_frasi cf
+            INNER JOIN testi_frasi tf ON cf.testo_frase = tf.id_testo_frase
+            WHERE tf.articolo_contenitore = titolo_articolo
+            AND cf.autore_contesto = id_autore
+        ) THEN
+            RAISE EXCEPTION 'Articolo non accessibile per l''autore con ID %', id_autore;
+        END IF;
+
+        RETURN QUERY (
+            SELECT *
+            FROM testi_join_contesti tjc
+            WHERE tjc.articolo_contenitore = titolo_articolo
+            AND tjc.accettazione = TRUE
+            ORDER BY tjc.posizione, tjc.data_accettazione_testo;
+        );
+    END;
+$function$;
 
 CREATE OR REPLACE FUNCTION crea_testo_frase (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE)
 RETURNS testi_frasi.id_testo_frase%TYPE
