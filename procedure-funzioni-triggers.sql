@@ -587,26 +587,41 @@ LANGUAGE plpgsql
 AS $function$
     BEGIN
         IF NOT EXISTS (
+            SELECT 1 
+            FROM articoli a 
+            WHERE a.titolo = articolo
+        ) THEN
+            RAISE EXCEPTION 'L''articolo non esiste';
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM autori a
+            WHERE a.id_autore = autore
+        ) THEN
+            RAISE EXCEPTION 'L''autore non esiste';
+        END IF;
+
+        IF NOT EXISTS (
             SELECT 1
             FROM articoli a
-            WHERE a.titolo = titolo_articolo
-            AND a.autore_articolo = id_autore
+            WHERE a.titolo = articolo
+            AND a.autore_articolo = autore
         ) AND NOT EXISTS (
             SELECT 1
-            FROM contesti_frasi cf
-            INNER JOIN testi_frasi tf ON cf.testo_frase = tf.id_testo_frase
-            WHERE tf.articolo_contenitore = titolo_articolo
-            AND cf.autore_contesto = id_autore
+            FROM testi_join_contesti tjc
+            WHERE tjc.articolo_contenitore = articolo
+            AND tjc.autore_contesto = autore
         ) THEN
-            RAISE EXCEPTION 'Articolo non accessibile per l''autore con ID %', id_autore;
+            RAISE EXCEPTION 'Articolo non accessibile per l''autore con ID %', autore;
         END IF;
 
         RETURN QUERY (
             SELECT *
             FROM testi_join_contesti tjc
-            WHERE tjc.articolo_contenitore = titolo_articolo
+            WHERE tjc.articolo_contenitore = articolo
             AND tjc.accettazione = TRUE
-            ORDER BY tjc.posizione, tjc.data_accettazione_testo;
+            ORDER BY tjc.posizione, tjc.data_accettazione_testo
         );
     END;
 $function$;
@@ -654,3 +669,38 @@ AS $procedure$
         id_contesto_frase = crea_contesto(id_testo_frase, posizione_contesto, autore);
     END;
 $procedure$;
+
+CREATE OR REPLACE PROCEDURE registra_autore (nickname_autore autori.nickname%TYPE, password_autore autori.password%TYPE, email_autore autori.email%TYPE)
+LANGUAGE plpgsql
+AS $procedure$
+    BEGIN
+        INSERT INTO autori 
+        (nickname, password, email)
+        VALUES
+        (nickname_autore, password_autore, email_autore);
+    END;
+$procedure$;
+
+CREATE OR REPLACE FUNCTION accesso_nickname (nickname_autore autori.nickname%TYPE, password_autore autori.password%TYPE)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN (SELECT id_autore 
+            FROM autori
+            WHERE nickname = nickname_autore AND password = password_autore
+        );
+    END;
+$function$;
+
+CREATE OR REPLACE FUNCTION accesso_email (email_autore autori.email%TYPE, password_autore autori.password%TYPE)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $function$
+    BEGIN
+        RETURN (SELECT id_autore 
+            FROM autori
+            WHERE email = email_autore AND password = password_autore
+        );
+    END;
+$function$;
