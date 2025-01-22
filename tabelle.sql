@@ -1,20 +1,27 @@
 CREATE TABLE articoli (
     titolo VARCHAR(255) PRIMARY KEY,
     autore_articolo INT,
-    data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL
+    data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+
+	CHECK (NOT TRIM(BOTH ' ' FROM titolo) = '')
 );
 
 CREATE TABLE autori (
-    nickname VARCHAR(255) NOT NULL,
+    nickname VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(512) NOT NULL,
     rating DOUBLE PRECISION,
-    email VARCHAR(255) NOT NULL,
-    id_autore INT PRIMARY KEY
+    email VARCHAR(255) NOT NULL UNIQUE,
+    id_autore INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+
+	CHECK (NOT TRIM(BOTH ' ' FROM email) = ''),
+	CHECK (NOT TRIM(BOTH ' ' FROM password) = ''),
+	CHECK (NOT TRIM(BOTH ' ' FROM nickname) = '')
 );
 
 CREATE TABLE testi_frasi (
 	id_testo_frase INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	testo VARCHAR (255),
+	testo VARCHAR(255) NOT NULL,
 	articolo_contenitore VARCHAR(255) NOT NULL,
 
 	FOREIGN KEY (articolo_contenitore) REFERENCES articoli(titolo),
