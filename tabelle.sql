@@ -1,6 +1,6 @@
 CREATE TABLE articoli (
     titolo VARCHAR(255) PRIMARY KEY,
-    autore_articolo INT,
+    autore_articolo INT NOT NULL,
     data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 
 	CHECK (NOT TRIM(BOTH ' ' FROM titolo) = '')
@@ -53,6 +53,8 @@ CREATE TABLE merge_modifiche (
 	visionato BOOLEAN,
 
 	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto)
+
+	CHECK (offset_posizione >= 0)
 );
 
 
