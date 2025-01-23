@@ -52,7 +52,7 @@ CREATE TABLE merge_modifiche (
 	offset_posizione INT,
 	visionato BOOLEAN,
 
-	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto)
+	FOREIGN KEY (contesto_da_ordinare) REFERENCES contesti_frasi (id_contesto),
 
 	CHECK (offset_posizione >= 0)
 );
