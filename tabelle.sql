@@ -1,11 +1,3 @@
-CREATE TABLE articoli (
-    titolo VARCHAR(255) PRIMARY KEY,
-    autore_articolo INT NOT NULL,
-    data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-
-	CHECK (NOT TRIM(BOTH ' ' FROM titolo) = '')
-);
-
 CREATE TABLE autori (
     nickname VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(512) NOT NULL,
@@ -16,6 +8,15 @@ CREATE TABLE autori (
 	CHECK (NOT TRIM(BOTH ' ' FROM email) = ''),
 	CHECK (NOT TRIM(BOTH ' ' FROM password) = ''),
 	CHECK (NOT TRIM(BOTH ' ' FROM nickname) = '')
+);
+
+CREATE TABLE articoli (
+    titolo VARCHAR(255) PRIMARY KEY,
+    autore_articolo INT NOT NULL,
+    data_creazione TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+
+	FOREIGN KEY (autore_articolo) REFERENCES autori(id_autore),
+	CHECK (NOT TRIM(BOTH ' ' FROM titolo) = '')
 );
 
 CREATE TABLE testi_frasi (
@@ -42,7 +43,7 @@ CREATE TABLE contesti_frasi (
 	FOREIGN KEY (testo_frase) REFERENCES testi_frasi(id_testo_frase),
 	FOREIGN KEY (collegamento) REFERENCES articoli(titolo),
 
-	CHECK (data_creazione < data_aggiornamento)
+	CHECK (data_creazione <= data_aggiornamento)
 );
 
 

@@ -96,6 +96,12 @@ AS $function$
         data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE := NOW();
         varianza_posizione_contesto INTEGER;
         addendo_posizione INTEGER;
+        next_contesto contesti_frasi.id_contesto%TYPE := (SELECT tjf.id_contesto 
+                                                            FROM testi_join_contesti tjf 
+                                                            WHERE tjf.id_contesto > NEW.id_contesto
+                                                            AND tjf.posizione = NEW.posizione
+                                                            ORDER BY tjf.id_contesto DESC
+                                                            LIMIT 1);
     BEGIN
         IF is_contesto_revisionato(OLD, NEW)
         THEN
@@ -139,13 +145,16 @@ AS $function$
         
         IF NEW.accettazione = TRUE
         THEN
-            IF riga_merge IS NULL
+            IF get_count_modifiche_in_stessa_posizione(OLD.id_contesto) > 0 AND NEW.accettazione = TRUE
             THEN
-                RAISE EXCEPTION 'Frase non ordinabile (manca una entry in merge_modifiche)';
-            END IF;
-            IF riga_merge.visionato = FALSE
-            THEN
-                RAISE EXCEPTION 'Frase non ordinata';
+                IF riga_merge IS NULL
+                THEN 
+                    RAISE EXCEPTION 'Frase non ordinabile (manca la necessaria entry in merge_modifiche)';
+                END IF;
+                IF riga_merge.visionato = FALSE
+                THEN
+                    RAISE EXCEPTION 'Frase non ordinata';
+                END IF;
             END IF;
             
             old_posizione := CASE WHEN NEW.posizione = -1 THEN 
@@ -205,8 +214,13 @@ AS $function$
             articolo_riferimento,
             NEW.testo_frase,
             old_posizione + addendo_posizione);
-        
-
+        IF next_contesto > NEW.id_contesto AND next_contesto IS NOT NULL
+        THEN
+            INSERT INTO merge_modifiche 
+            (contesto_da_ordinare)
+            VALUES  
+            (next_contesto);
+        END IF;
         RETURN NEW;
     END;
 $function$;
@@ -238,28 +252,13 @@ CREATE OR REPLACE FUNCTION aggiornamento_merge_modifiche ()
     RETURNS trigger
     LANGUAGE plpgsql
     AS $function$
-    DECLARE
-		data_inserimento_contesto contesti_frasi.data_creazione%TYPE :=
-        (SELECT data_creazione FROM contesti_frasi WHERE id_contesto = NEW.contesto_da_ordinare);
-    	articolo articoli.titolo%TYPE := (SELECT articolo_contenitore FROM testi_frasi
-										  INNER JOIN contesti_frasi
-										  ON id_testo_frase = testo_frase
-										  WHERE id_contesto = NEW.contesto_da_ordinare);
-		posizione_originale INTEGER := (SELECT posizione
-										FROM contesti_frasi
-										WHERE id_contesto = NEW.contesto_da_ordinare);
-	BEGIN
+    BEGIN
         IF NEW.visionato = FALSE
         THEN RAISE EXCEPTION 'visionato non può essere false';
         END IF;
 
         IF NEW.offset_posizione < 0 OR
-            NEW.offset_posizione > (SELECT COUNT(*)
-                                    FROM get_modifiche_su_articolo(articolo)
-                                    WHERE data_aggiornamento >= data_inserimento_contesto AND
-									accettazione = true AND
-									posizione = posizione_originale
-                                    )
+            NEW.offset_posizione > get_count_modifiche_in_stessa_posizione(NEW.contesto_da_ordinare)
         THEN
             RAISE EXCEPTION 'non si può avere offset_posizione minore di 0 o maggiore delle contesti_frasi accettate destinate a quella posizione';
         END IF;
@@ -578,6 +577,31 @@ AS $function$
     END;
 $function$;
 
+CREATE OR REPLACE FUNCTION get_count_modifiche_in_stessa_posizione (contesto contesti_frasi.id_contesto%TYPE)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $function$
+    DECLARE 
+
+		data_inserimento_contesto contesti_frasi.data_creazione%TYPE := (SELECT data_creazione 
+                                                                        FROM contesti_frasi 
+                                                                        WHERE id_contesto = contesto);
+
+        articolo articoli.titolo%TYPE := (SELECT articolo_contenitore 
+                    FROM testi_join_contesti tjf 
+                    WHERE id_contesto = contesto);
+        posizione_originale INTEGER := (SELECT posizione
+										FROM contesti_frasi
+										WHERE id_contesto = contesto);
+    BEGIN
+        RETURN (SELECT COUNT(*)
+            FROM get_modifiche_su_articolo(articolo)
+            WHERE data_aggiornamento >= data_inserimento_contesto AND
+            accettazione = true AND
+            posizione = posizione_originale);
+    END;
+$function$;
+
 CREATE OR REPLACE FUNCTION get_modifiche_di_autore (autore autori.id_autore%TYPE)
 RETURNS SETOF testi_join_contesti
 LANGUAGE plpgsql
@@ -662,6 +686,7 @@ AS $function$
         VALUES
         (frase, posizione_contesto, autore)
         RETURNING id_contesto INTO id_contesto_frase;
+
         RETURN id_contesto_frase;
     END;
 $function$;
