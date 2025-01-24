@@ -205,10 +205,7 @@ AS $function$
             articolo_riferimento,
             NEW.testo_frase,
             old_posizione + addendo_posizione);
-            
-        UPDATE autore
-        SET rating = calc_rating(autore_articolo_contesto)
-        WHERE id_autore = autore_articolo_contesto;
+        
 
         RETURN NEW;
     END;
@@ -527,16 +524,27 @@ AS $function$
     BEGIN
         numero_articoli := (SELECT COUNT(*) FROM articoli WHERE autore_articolo = autore);
 
-        modifiche_accettate := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
-            data_revisione_testo IS NOT NULL AND 
-            (data_revisione_testo = data_aggiornamento OR posizione = -1) AND
-            accettazione = true);
+        modifiche_proposte := (SELECT COUNT(*) FROM testi_join_contesti as tjf
+            INNER JOIN articoli as a ON tjf.articolo_contenitore = a.titolo
+            WHERE tjf.autore_contesto = autore AND
+            NOT a.autore_articolo = autore AND 
+            tjf.data_revisione_testo IS NOT NULL AND 
+            (tjf.data_revisione_testo = tjf.data_aggiornamento OR tjf.posizione = -1));
 
-        modifiche_proposte := (SELECT COUNT(*) FROM contesti_frasi WHERE autore_contesto = autore AND
-            data_revisione_testo IS NOT NULL AND 
-            (data_revisione_testo = data_aggiornamento OR posizione = -1));
+        modifiche_accettate := (SELECT COUNT(*) FROM testi_join_contesti as tjf
+            INNER JOIN articoli as a ON tjf.articolo_contenitore = a.titolo
+            WHERE tjf.autore_contesto = autore AND
+            NOT a.autore_articolo = autore AND 
+            tjf.data_revisione_testo IS NOT NULL AND 
+            (tjf.data_revisione_testo = tjf.data_aggiornamento OR tjf.posizione = -1) AND
+            tjf.accettazione = true);
 
-        RETURN numero_articoli / (modifiche_accettate / modifiche_proposte);
+        IF modifiche_proposte = 0
+        THEN
+            RETURN 0;
+        ELSE
+            RETURN numero_articoli * (modifiche_accettate / modifiche_proposte);
+        END IF;
     END;
 $function$;
 
