@@ -24,6 +24,9 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                                       WHERE accettazione = true AND
                                       testo_frase != NEW.testo_frase AND
                                       data_aggiornamento = get_max_data_aggiornamento(testo_frase));
+        contenuto_testo testi_frasi.testo%TYPE = (SELECT testo 
+                                                  FROM testi_frasi 
+                                                  WHERE id_testo_frase = NEW.testo_frase);
         BEGIN
             IF NEW.posizione < -1
                 THEN RAISE EXCEPTION 'La posizione di una frase non può essere minore di -1';
@@ -33,6 +36,18 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
             IF NEW.posizione > posizione_massima
             THEN
                 RAISE EXCEPTION 'Posizione contesto > posizione massima possibile per questo articolo';
+            END IF;
+            IF EXISTS (SELECT *
+                       FROM testi_join_contesti
+                       WHERE (id_testo_frase = NEW.testo_frase OR testo = contenuto_testo) AND
+                       articolo_contenitore = articolo_originale AND
+                       posizione = NEW.posizione AND
+                       autore_contesto = NEW.autore_contesto AND
+                       accettazione = false AND
+                       data_aggiornamento IS NULL
+                       )
+            THEN
+                RAISE EXCEPTION 'La frase inserita è identica ad una già inserita da questo autore che ancora deve essere revisionata';
             END IF;
 
 
@@ -66,6 +81,7 @@ CREATE OR REPLACE FUNCTION inserimento_contesto()
                         posizione_partenza_spostamento);
 
                     END IF;
+                    CALL insert_next_merge_modifiche(NEW.id_contesto, NEW.posizione);
                 ELSE
                     IF NEW.accettazione = false
                     THEN
@@ -96,12 +112,6 @@ AS $function$
         data_aggiornamento_mod_originale contesti_frasi.data_aggiornamento%TYPE := NOW();
         varianza_posizione_contesto INTEGER;
         addendo_posizione INTEGER;
-        next_contesto contesti_frasi.id_contesto%TYPE := (SELECT tjf.id_contesto 
-                                                            FROM testi_join_contesti tjf 
-                                                            WHERE tjf.id_contesto > NEW.id_contesto
-                                                            AND tjf.posizione = NEW.posizione
-                                                            ORDER BY tjf.id_contesto DESC
-                                                            LIMIT 1);
     BEGIN
         IF is_contesto_revisionato(OLD, NEW)
         THEN
@@ -163,7 +173,12 @@ AS $function$
                             END;
 
             addendo_posizione := (varianza_posizione_contesto -
-                          (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento) - riga_merge.offset_posizione));
+                          (get_contesti_frasi_in_stessa_posizione(old_posizione, NEW.data_creazione, articolo_riferimento)));
+                        
+            IF riga_merge IS NOT NULL 
+            THEN 
+                addendo_posizione := addendo_posizione - riga_merge.offset_posizione;
+            END IF;
 
             RAISE NOTICE 'old_posizione = %', old_posizione;
 
@@ -209,18 +224,16 @@ AS $function$
         DELETE FROM merge_modifiche WHERE contesto_da_ordinare = NEW.id_contesto;
         END IF;
 
+        IF riga_merge IS NOT NULL
+        THEN
+            steps := steps + riga_merge.offset_posizione;
+        END IF;
 
-        CALL spostamento_contesti_frasi(steps + riga_merge.offset_posizione,
+        CALL spostamento_contesti_frasi(steps,
             articolo_riferimento,
             NEW.testo_frase,
             old_posizione + addendo_posizione);
-        IF next_contesto > NEW.id_contesto AND next_contesto IS NOT NULL
-        THEN
-            INSERT INTO merge_modifiche 
-            (contesto_da_ordinare)
-            VALUES  
-            (next_contesto);
-        END IF;
+        CALL insert_next_merge_modifiche(NEW.id_contesto, NEW.posizione);
         RETURN NEW;
     END;
 $function$;
@@ -553,13 +566,13 @@ RETURNS SETOF testi_join_contesti
 LANGUAGE plpgsql
 AS $function$
     BEGIN
-        RETURN QUERY(SELECT * FROM get_modifiche_su_articolo(articolo)
+        RETURN QUERY(SELECT * FROM get_modifiche_su_articolo(articolo) as tjf
 			WHERE accettazione = TRUE
             AND posizione > -1
             AND data_aggiornamento = (
                 SELECT MAX(cf2.data_aggiornamento)
                 FROM contesti_frasi cf2
-                WHERE cf2.testo_frase = testo_frase AND cf2.data_aggiornamento <= data_articolo
+                WHERE cf2.testo_frase = tjf.testo_frase AND cf2.data_aggiornamento <= data_articolo
                 )
                 ORDER BY posizione
         );
@@ -657,6 +670,30 @@ AS $function$
         );
     END;
 $function$;
+
+CREATE OR REPLACE PROCEDURE insert_next_merge_modifiche (contesto contesti_frasi.id_contesto%TYPE, posizione_contesto contesti_frasi.posizione%TYPE)
+LANGUAGE plpgsql
+AS $procedure$
+    DECLARE
+
+    next_contesto contesti_frasi.id_contesto%TYPE := (SELECT tjf.id_contesto 
+                                                        FROM testi_join_contesti tjf 
+                                                        WHERE tjf.id_contesto > contesto AND
+                                                        tjf.posizione = posizione_contesto AND
+                                                        tjf.data_aggiornamento IS NULL
+                                                        ORDER BY tjf.id_contesto ASC
+                                                        LIMIT 1);
+
+    BEGIN
+        IF next_contesto > contesto AND next_contesto IS NOT NULL
+        THEN
+            INSERT INTO merge_modifiche 
+            (contesto_da_ordinare)
+            VALUES  
+            (next_contesto);
+        END IF;
+    END;
+$procedure$;
 
 CREATE OR REPLACE FUNCTION crea_testo_frase (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE)
 RETURNS testi_frasi.id_testo_frase%TYPE
