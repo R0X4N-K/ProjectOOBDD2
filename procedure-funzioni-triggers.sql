@@ -360,19 +360,6 @@ CREATE OR REPLACE FUNCTION contesto_analogo_exists (contesto contesti_frasi)
     $function$;
 
 
-CREATE OR REPLACE FUNCTION is_frase_in_articolo (articolo articoli.titolo%TYPE, frase INTEGER)
-    RETURNS BOOLEAN
-    LANGUAGE plpgsql
-    as $function$
-        BEGIN
-        IF get_articolo_from_frase(frase) != articolo
-        THEN
-            RAISE EXCEPTION 'Frase non appartenente all''articolo selezionato';
-        END IF;
-        RETURN is_frase_in_articolo(frase);
-    END;
-    $function$;
-
 CREATE OR REPLACE FUNCTION is_frase_in_articolo (frase INTEGER)
     RETURNS BOOLEAN
     LANGUAGE plpgsql
@@ -695,16 +682,16 @@ AS $procedure$
     END;
 $procedure$;
 
-CREATE OR REPLACE FUNCTION crea_testo_frase (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE)
+CREATE OR REPLACE FUNCTION crea_testo_frase (testo_frase testi_frasi.testo%TYPE, articolo_di_appartenenza testi_frasi.articolo_contenitore%TYPE, autore testi_frasi.autore_testo%TYPE)
 RETURNS testi_frasi.id_testo_frase%TYPE
 LANGUAGE plpgsql
 AS $function$
     DECLARE id_testo testi_frasi.id_testo_frase%TYPE;
     BEGIN
         INSERT INTO testi_frasi
-        (testo, articolo_contenitore)
+        (testo, articolo_contenitore, autore_testo)
         VALUES
-        (testo_frase, articolo_di_appartenenza)
+        (testo_frase, articolo_di_appartenenza, autore)
         RETURNING id_testo_frase INTO id_testo;
         RETURN id_testo;
     END;
@@ -735,7 +722,7 @@ AS $procedure$
 	DECLARE id_testo_frase INT;
 	id_contesto_frase INT;
     BEGIN
-		id_testo_frase = crea_testo_frase (testo_frase, articolo_di_appartenenza);
+		id_testo_frase = crea_testo_frase (testo_frase, articolo_di_appartenenza, autore);
         id_contesto_frase = crea_contesto(id_testo_frase, posizione_contesto, autore);
     END;
 $procedure$;
